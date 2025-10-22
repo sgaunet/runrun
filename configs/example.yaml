@@ -1,0 +1,50 @@
+# RunRun Example Configuration
+
+server:
+  port: 8080
+  log_level: "info"
+  max_concurrent_tasks: 5
+  session_timeout: 24h
+  log_directory: "./logs"
+  shutdown_timeout: 5m
+
+auth:
+  jwt_secret: "this-is-a-very-long-secret-key-for-jwt-signing-at-least-32-chars"
+  users:
+    - username: "admin"
+      password: "$2a$10$N9qo8uLOickgx2ZMRZoMye.J.oYdBwqHCQs6M8xzK3wL8K8VzQWpu"  # "password"
+    - username: "operator"
+      password: "$2a$10$N9qo8uLOickgx2ZMRZoMye.J.oYdBwqHCQs6M8xzK3wL8K8VzQWpu"  # "password"
+
+tasks:
+  - name: "hello-world"
+    description: "Simple hello world task"
+    tags: ["demo", "simple"]
+    timeout: 1m
+    working_directory: "."
+    steps:
+      - name: "Print message"
+        command: "echo 'Hello, World!'"
+
+  - name: "system-info"
+    description: "Display system information"
+    tags: ["monitoring", "system"]
+    timeout: 30s
+    steps:
+      - name: "Show hostname"
+        command: "hostname"
+      - name: "Show uptime"
+        command: "uptime"
+      - name: "Show disk usage"
+        command: "df -h"
+
+  - name: "env-example"
+    description: "Example task with environment variables"
+    tags: ["demo", "env"]
+    timeout: 1m
+    environment:
+      GREETING: "Hello"
+      TARGET: "RunRun"
+    steps:
+      - name: "Print environment"
+        command: "echo $GREETING, $TARGET!"

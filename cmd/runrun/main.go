@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/sgaunet/runrun/internal/auth"
+	"github.com/sgaunet/runrun/internal/config"
+	"github.com/sgaunet/runrun/internal/server"
 )
 
 func main() {
@@ -89,19 +91,29 @@ func printHelp() {
 }
 
 func runServer() {
-	// Create HTTP server mux
-	mux := http.NewServeMux()
+	// Configuration file path
+	configFile := flag.String("config", "configs/example.yaml", "Path to configuration file")
+	flag.Parse()
 
-	// Health check endpoint
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		fmt.Fprintf(w, "OK")
-	})
+	// Load configuration
+	cfg, err := config.LoadConfig(*configFile)
+	if err != nil {
+		log.Fatalf("Failed to load configuration: %v", err)
+	}
+
+	log.Printf("Configuration loaded successfully")
+	log.Printf("Server will run on port %d", cfg.Server.Port)
+	log.Printf("Loaded %d tasks, %d users", len(cfg.Tasks), len(cfg.Auth.Users))
 
 	// Create server
-	server := &http.Server{
-		Addr:         ":8080",
-		Handler:      mux,
+	srv := server.New(cfg)
+	srv.SetupRoutes()
+
+	// Create HTTP server
+	addr := fmt.Sprintf(":%d", cfg.Server.Port)
+	httpServer := &http.Server{
+		Addr:         addr,
+		Handler:      srv.Router(),
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 15 * time.Second,
 		IdleTimeout:  60 * time.Second,
@@ -109,8 +121,8 @@ func runServer() {
 
 	// Start server in a goroutine
 	go func() {
-		log.Printf("Starting HTTP server on port 8080")
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		log.Printf("Starting HTTP server on %s", addr)
+		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Failed to start server: %v", err)
 		}
 	}()
@@ -121,4 +133,5 @@ func runServer() {
 	<-quit
 
 	log.Println("Server shutting down...")
+	// TODO: Implement graceful shutdown with context timeout
 }

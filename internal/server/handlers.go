@@ -477,66 +477,109 @@ func (s *Server) pollLogsHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
-// WebSocket upgrader
+// upgrader configures the WebSocket protocol upgrade from HTTP
+//
+// SECURITY: Origin validation (CheckOrigin) prevents Cross-Site WebSocket Hijacking (CSWSH) attacks
+// where malicious websites could establish WebSocket connections to this server using
+// the victim's authenticated session cookies.
+//
+// Security Policy:
+// - Browser connections: MUST come from same origin (same host)
+// - Non-browser clients (CLI, scripts): Allowed (no Origin header)
+// - Different scheme (http vs https) on same host: Allowed
+//
+// See docs/websocket-authentication.md for complete security documentation
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
+
+	// CheckOrigin validates the Origin header to enforce same-origin policy
+	// This is a critical security control for browser-based WebSocket connections
 	CheckOrigin: func(r *http.Request) bool {
-		// Validate origin to prevent CSRF attacks on WebSocket connections
 		origin := r.Header.Get("Origin")
+
+		// Allow requests without Origin header
+		// - Non-browser clients (curl, scripts, CLI tools) don't send Origin
+		// - These clients still require authentication (JWT token)
 		if origin == "" {
-			// No origin header - allow (some clients don't send it)
 			return true
 		}
 
-		// Parse origin URL
+		// Parse and validate Origin header format
 		originURL, err := url.Parse(origin)
 		if err != nil {
 			log.Printf("Invalid origin URL: %s - %v", origin, err)
 			return false
 		}
 
-		// Get expected host from request
+		// Enforce same-origin policy: origin host must match request host
+		// Note: Scheme (http vs https) is ignored - only host is checked
+		// This allows development with http and production with https
 		expectedHost := r.Host
-
-		// Compare origin host with request host (same-origin policy)
 		if originURL.Host == expectedHost {
 			return true
 		}
 
-		// Log rejected origin for security monitoring
+		// Reject and log cross-origin attempts for security monitoring
 		log.Printf("WebSocket origin rejected: %s (expected: %s)", originURL.Host, expectedHost)
 		return false
 	},
 }
 
 // wsLogsHandler handles WebSocket connections for real-time log streaming
+// wsLogsHandler streams execution logs via WebSocket connection
+//
+// SECURITY NOTE: This handler is intentionally placed OUTSIDE the middleware chain
+// because WebSocket upgrades require the http.Hijacker interface, which can be broken
+// by middleware that wraps the ResponseWriter (e.g., compression middleware).
+// Therefore, authentication MUST be performed manually within this handler.
+//
+// Authentication Flow:
+// 1. Extract JWT token from session cookie (preferred) or Authorization header (fallback)
+// 2. Validate token is present (return 401 if missing)
+// 3. Validate JWT signature and check session exists (return 401 if invalid)
+// 4. Verify execution exists (return 404 if not found)
+// 5. Upgrade connection and stream logs
+//
+// Supported authentication methods (checked in order):
+//   - Session cookie: Cookie: session=<jwt-token>
+//   - Authorization header: Authorization: Bearer <jwt-token>
+//
+// See docs/websocket-authentication.md for complete documentation
 func (s *Server) wsLogsHandler(w http.ResponseWriter, r *http.Request) {
 	executionID := chi.URLParam(r, "executionID")
 
-	// Manually validate authentication before upgrading to WebSocket
-	// The auth middleware's redirect doesn't work for WebSocket upgrades
+	// === AUTHENTICATION PHASE ===
+	// Manual authentication is required because this endpoint is outside the middleware chain
+
+	// Step 1: Extract authentication token from request
+	// Try session cookie first (browser-based clients)
 	token := ""
 	cookie, err := r.Cookie("session")
 	if err == nil {
 		token = cookie.Value
 	}
 
-	// If no cookie, try Authorization header
+	// Step 2: Fallback to Authorization header (CLI/programmatic clients)
+	// Format: "Authorization: Bearer <jwt-token>"
 	if token == "" {
 		authHeader := r.Header.Get("Authorization")
 		if authHeader != "" && len(authHeader) > 7 && authHeader[:7] == "Bearer " {
-			token = authHeader[7:]
+			token = authHeader[7:] // Extract token after "Bearer "
 		}
 	}
 
-	// Validate session
+	// Step 3: Reject if no authentication provided
 	if token == "" {
 		log.Printf("WebSocket auth failed for %s: no session token", executionID)
 		http.Error(w, "Unauthorized: no session token", http.StatusUnauthorized)
 		return
 	}
 
+	// Step 4: Validate JWT token and verify session exists
+	// This performs two-tier validation:
+	// 1. JWT signature and expiration check
+	// 2. Session store lookup (enables token revocation)
 	username, err := s.authService.ValidateSession(token)
 	if err != nil {
 		log.Printf("WebSocket auth failed for %s: invalid session - %v", executionID, err)
@@ -546,14 +589,17 @@ func (s *Server) wsLogsHandler(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("WebSocket connection authorized for user '%s' viewing execution %s", username, executionID)
 
-	// Get execution from executor
+	// === AUTHORIZATION PHASE ===
+	// Verify the requested execution exists
 	execution, err := s.executor.GetExecution(executionID)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Execution not found: %v", err), http.StatusNotFound)
 		return
 	}
 
-	// Upgrade HTTP connection to WebSocket
+	// === WEBSOCKET UPGRADE ===
+	// Upgrade HTTP connection to WebSocket protocol
+	// Origin validation is performed by the upgrader's CheckOrigin function
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Printf("WebSocket upgrade failed: %v", err)

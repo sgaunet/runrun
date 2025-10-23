@@ -116,3 +116,17 @@ func (s *Service) CleanupExpiredSessions() {
 		}
 	}
 }
+
+// CreateSessionForTesting creates a session for testing purposes
+// This should only be used in tests
+func (s *Service) CreateSessionForTesting(token, username string) {
+	s.sessionsMutex.Lock()
+	defer s.sessionsMutex.Unlock()
+
+	s.sessions[token] = &Session{
+		Username:  username,
+		Token:     token,
+		ExpiresAt: time.Now().Add(s.sessionTimeout),
+		CreatedAt: time.Now(),
+	}
+}

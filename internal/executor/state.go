@@ -172,3 +172,11 @@ func (e *TaskExecutor) GetTaskStatus(taskName string) string {
 
 	return string(latest.Status)
 }
+
+// AddTestExecution adds an execution for testing purposes
+// This should only be used in tests
+func (e *TaskExecutor) AddTestExecution(executionID string, execution *Execution) {
+	e.executionsMutex.Lock()
+	defer e.executionsMutex.Unlock()
+	e.executions[executionID] = execution
+}

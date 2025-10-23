@@ -8,7 +8,11 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/sgaunet/runrun/internal/auth"
 	"github.com/sgaunet/runrun/internal/config"
+	"github.com/sgaunet/runrun/internal/csrf"
 	"github.com/sgaunet/runrun/internal/executor"
+	customMiddleware "github.com/sgaunet/runrun/internal/middleware"
+	"github.com/sgaunet/runrun/internal/ratelimit"
+	"github.com/sgaunet/runrun/internal/security"
 	"github.com/sgaunet/runrun/internal/websocket"
 )
 
@@ -22,6 +26,9 @@ type Server struct {
 	wsHandler     *websocket.Handler
 	wsBroadcaster *websocket.Broadcaster
 	startTime     time.Time
+	rateLimiter   *ratelimit.Limiter
+	csrf          *csrf.Protection
+	auditLogger   *security.Logger
 }
 
 // New creates a new server instance
@@ -50,6 +57,15 @@ func New(cfg *config.Config) *Server {
 	s.wsHub = websocket.NewHub()
 	s.wsHandler = websocket.NewHandler(s.wsHub, websocket.DefaultConfig())
 	s.wsBroadcaster = websocket.NewBroadcaster(s.wsHub)
+
+	// Initialize rate limiter (5 login attempts per 15 minutes)
+	s.rateLimiter = ratelimit.NewLimiter(5, 15*time.Minute)
+
+	// Initialize CSRF protection
+	s.csrf = csrf.New()
+
+	// Initialize security audit logger
+	s.auditLogger = security.NewLogger()
 
 	// Start WebSocket hub
 	go s.wsHub.Run()
@@ -83,12 +99,13 @@ func (s *Server) setupRouter() {
 	r := chi.NewRouter()
 
 	// Middleware stack (order matters!)
-	r.Use(middleware.RequestID)        // Inject request ID into context
-	r.Use(middleware.RealIP)           // Set RemoteAddr to real IP
-	r.Use(middleware.Logger)           // Log requests
-	r.Use(middleware.Recoverer)        // Recover from panics
-	r.Use(middleware.Compress(5))      // Compress responses
-	r.Use(middleware.Timeout(60 * time.Second)) // Request timeout
+	r.Use(customMiddleware.RequestIDMiddleware)   // Custom request ID with UUID
+	r.Use(customMiddleware.RecoveryMiddleware)    // Custom panic recovery
+	r.Use(customMiddleware.SecurityHeadersMiddleware) // Security headers
+	r.Use(customMiddleware.LoggingMiddleware)     // Custom logging
+	r.Use(middleware.RealIP)                      // Set RemoteAddr to real IP
+	r.Use(middleware.Compress(5))                 // Compress responses
+	r.Use(customMiddleware.TimeoutMiddleware(60 * time.Second)) // Request timeout with custom handling
 
 	s.router = r
 }

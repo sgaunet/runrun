@@ -13,7 +13,13 @@ func (s *Server) SetupRoutes() {
 	// Public routes (no authentication required)
 	r.Group(func(r chi.Router) {
 		r.Get("/login", s.loginPageHandlerTempl)
-		r.Post("/login", s.authService.LoginHandler)
+
+		// Apply rate limiting to login POST endpoint
+		r.Group(func(r chi.Router) {
+			r.Use(s.rateLimiter.Middleware)
+			r.Post("/login", s.authService.LoginHandler)
+		})
+
 		r.Post("/logout", s.authService.LogoutHandler)
 
 		// Health check endpoints
@@ -36,7 +42,12 @@ func (s *Server) SetupRoutes() {
 		// Task routes
 		r.Route("/tasks", func(r chi.Router) {
 			r.Get("/{taskName}", s.taskDetailHandlerTempl)
-			r.Post("/{taskName}/execute", s.executeTaskHandler)
+
+			// Apply CSRF protection to POST requests
+			r.Group(func(r chi.Router) {
+				r.Use(s.csrf.Middleware)
+				r.Post("/{taskName}/execute", s.executeTaskHandler)
+			})
 		})
 
 		// API routes

@@ -12,9 +12,9 @@ auth:
   jwt_secret: "this-is-a-very-long-secret-key-for-jwt-signing-at-least-32-chars"
   users:
     - username: "admin"
-      password: "$2a$10$N9qo8uLOickgx2ZMRZoMye.J.oYdBwqHCQs6M8xzK3wL8K8VzQWpu"  # "password"
+      password: "$2a$10$Fsat6IhPZc9EW5oE.mzV4eQuTC57ET/SsCSHfAsBSXWITbTaYJa2u"  # "password"
     - username: "operator"
-      password: "$2a$10$N9qo8uLOickgx2ZMRZoMye.J.oYdBwqHCQs6M8xzK3wL8K8VzQWpu"  # "password"
+      password: "$2a$10$Fsat6IhPZc9EW5oE.mzV4eQuTC57ET/SsCSHfAsBSXWITbTaYJa2u"  # "password"
 
 tasks:
   - name: "hello-world"

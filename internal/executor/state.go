@@ -105,3 +105,70 @@ func (e *TaskExecutor) setLogFilePath(executionID, logPath string) {
 		execution.LogFilePath = logPath
 	}
 }
+
+// GetLatestExecution returns the most recent execution for a task
+func (e *TaskExecutor) GetLatestExecution(taskName string) (*Execution, error) {
+	e.executionsMutex.RLock()
+	defer e.executionsMutex.RUnlock()
+
+	var latest *Execution
+	for _, exec := range e.executions {
+		if exec.TaskName == taskName {
+			if latest == nil || exec.StartedAt.After(latest.StartedAt) {
+				latest = exec
+			}
+		}
+	}
+
+	if latest == nil {
+		return nil, fmt.Errorf("no executions found for task: %s", taskName)
+	}
+
+	return latest, nil
+}
+
+// TaskStats represents aggregated statistics for all tasks
+type TaskStats struct {
+	Total    int
+	Running  int
+	Success  int
+	Failed   int
+	Queued   int
+	Idle     int
+}
+
+// GetStats returns aggregated statistics for all tasks
+func (e *TaskExecutor) GetStats() TaskStats {
+	e.executionsMutex.RLock()
+	defer e.executionsMutex.RUnlock()
+
+	stats := TaskStats{}
+
+	// Count by status
+	for _, exec := range e.executions {
+		switch exec.Status {
+		case StatusRunning:
+			stats.Running++
+		case StatusSuccess:
+			stats.Success++
+		case StatusFailed:
+			stats.Failed++
+		case StatusQueued:
+			stats.Queued++
+		}
+	}
+
+	stats.Total = len(e.executions)
+
+	return stats
+}
+
+// GetTaskStatus returns the current status of a task based on its latest execution
+func (e *TaskExecutor) GetTaskStatus(taskName string) string {
+	latest, err := e.GetLatestExecution(taskName)
+	if err != nil {
+		return "idle"
+	}
+
+	return string(latest.Status)
+}

@@ -201,20 +201,52 @@ func (s *Server) executeTaskHandler(w http.ResponseWriter, r *http.Request) {
 
 // statusAPIHandler returns the status of all tasks
 func (s *Server) statusAPIHandler(w http.ResponseWriter, r *http.Request) {
-	// Build task status from config
+	// Get statistics from executor
+	stats := s.executor.GetStats()
+
+	// Build task status from config with real status
 	tasks := make([]map[string]interface{}, 0, len(s.config.Tasks))
 	for _, task := range s.config.Tasks {
+		// Get latest execution for this task
+		latest, err := s.executor.GetLatestExecution(task.Name)
+
+		status := "idle"
+		var lastRun interface{}
+		var duration interface{}
+
+		if err == nil {
+			// Task has been executed at least once
+			status = string(latest.Status)
+			lastRun = latest.StartedAt
+
+			if latest.FinishedAt != nil {
+				duration = latest.Duration.Seconds()
+			} else if latest.Status == executor.StatusRunning {
+				duration = time.Since(latest.StartedAt).Seconds()
+			}
+		}
+
 		tasks = append(tasks, map[string]interface{}{
 			"name":        task.Name,
 			"description": task.Description,
 			"tags":        task.Tags,
-			"status":      "idle", // TODO: Get real status from executor
+			"status":      status,
+			"last_run":    lastRun,
+			"duration":    duration,
 		})
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"tasks": tasks,
+		"stats": map[string]interface{}{
+			"total":       len(s.config.Tasks),
+			"running":     stats.Running,
+			"success":     stats.Success,
+			"failed":      stats.Failed,
+			"queued":      stats.Queued,
+			"executions":  stats.Total,
+		},
 	})
 }
 
@@ -367,17 +399,55 @@ func (s *Server) pollLogsHandler(w http.ResponseWriter, r *http.Request) {
 func (s *Server) dashboardHandlerTempl(w http.ResponseWriter, r *http.Request) {
 	username := auth.GetUsernameFromContext(r)
 
-	// Build task cards from config
+	// Get statistics from executor
+	stats := s.executor.GetStats()
+
+	// Build task cards from config with real status
 	taskCards := make([]templates.TaskCard, 0, len(s.config.Tasks))
+	idleCount := 0
+
 	for _, task := range s.config.Tasks {
+		// Get latest execution for this task
+		latest, err := s.executor.GetLatestExecution(task.Name)
+
+		status := "idle"
+		var lastRun *time.Time
+		duration := ""
+
+		if err == nil {
+			// Task has been executed at least once
+			status = string(latest.Status)
+			lastRun = &latest.StartedAt
+
+			if latest.FinishedAt != nil {
+				duration = latest.Duration.Round(time.Second).String()
+			} else if latest.Status == executor.StatusRunning {
+				duration = time.Since(latest.StartedAt).Round(time.Second).String()
+			}
+		} else {
+			idleCount++
+		}
+
 		card := templates.TaskCard{
 			Name:        task.Name,
 			Description: task.Description,
 			Tags:        task.Tags,
-			Status:      "idle",
-			LastRun:     nil,
+			Status:      status,
+			LastRun:     lastRun,
+			Duration:    duration,
 		}
 		taskCards = append(taskCards, card)
+	}
+
+	// Build dashboard statistics
+	dashboardStats := templates.DashboardStats{
+		TotalTasks:      len(s.config.Tasks),
+		RunningTasks:    stats.Running,
+		SuccessTasks:    stats.Success,
+		FailedTasks:     stats.Failed,
+		IdleTasks:       idleCount,
+		QueuedTasks:     stats.Queued,
+		TotalExecutions: stats.Total,
 	}
 
 	// Prepare page data
@@ -388,6 +458,7 @@ func (s *Server) dashboardHandlerTempl(w http.ResponseWriter, r *http.Request) {
 			CSRFToken:   "",
 		},
 		Tasks: taskCards,
+		Stats: dashboardStats,
 	}
 
 	// Render template

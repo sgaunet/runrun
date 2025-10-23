@@ -22,12 +22,25 @@ type TaskCard struct {
 	Tags        []string
 	Status      string
 	LastRun     *time.Time
+	Duration    string
+}
+
+// DashboardStats represents dashboard statistics
+type DashboardStats struct {
+	TotalTasks      int
+	RunningTasks    int
+	SuccessTasks    int
+	FailedTasks     int
+	IdleTasks       int
+	QueuedTasks     int
+	TotalExecutions int
 }
 
 // DashboardPageData contains data for the dashboard page
 type DashboardPageData struct {
 	BaseData
 	Tasks []TaskCard
+	Stats DashboardStats
 }
 
 // ExecutionInfo represents an execution for display

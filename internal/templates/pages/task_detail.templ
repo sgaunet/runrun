@@ -81,15 +81,16 @@ templ taskDetailContent(data TaskDetailPageData) {
 			</section>
 		</div>
 	<script>
+		const TASK_NAME = { templ.JSONString(data.TaskName) };
+
 		function runTask() {
-			const taskName = "{ data.TaskName }";
-			if (!confirm('Run task "' + taskName + '"?')) return;
+			if (!confirm('Run task "' + TASK_NAME + '"?')) return;
 
 			const btn = event.target;
 			btn.disabled = true;
 			btn.textContent = 'Starting...';
 
-			fetch('/tasks/' + taskName + '/execute', {
+			fetch('/tasks/' + TASK_NAME + '/execute', {
 				method: 'POST',
 				credentials: 'same-origin'
 			})

@@ -2,7 +2,17 @@
 logs
 *.log
 /dist/
+
 # Coverage
 coverage.txt
 *.coverprofile
+
+# Binary
 /runrun
+
+# Templ generated files
+*_templ.go
+
+# Frontend build tools and generated files
+/tools/
+/internal/server/static/css/styles.css

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html"
+	"log"
 	"net/http"
 	"time"
 
@@ -589,12 +590,15 @@ func (s *Server) taskDetailHandlerTempl(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
+	// Get or generate CSRF token for this session
+	csrfToken := s.getCSRFToken(r)
+
 	// Prepare page data
 	data := pages.TaskDetailPageData{
 		BaseData: layouts.BaseData{
 			Title:       task.Name,
 			CurrentUser: username,
-			CSRFToken:   "",
+			CSRFToken:   csrfToken,
 		},
 		TaskName:    task.Name,
 		Description: task.Description,
@@ -663,4 +667,31 @@ func (s *Server) viewLogsHandlerTempl(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to render template", http.StatusInternalServerError)
 		return
 	}
+}
+
+// getCSRFToken retrieves or generates a CSRF token for the current session
+func (s *Server) getCSRFToken(r *http.Request) string {
+	// Get session cookie
+	sessionCookie, err := r.Cookie(auth.SessionCookieName)
+	if err != nil {
+		// No session cookie, return empty string (shouldn't happen on authenticated routes)
+		return ""
+	}
+
+	sessionID := sessionCookie.Value
+
+	// Check if token already exists for this session
+	existingToken := s.csrf.GetToken(sessionID)
+	if existingToken != "" {
+		return existingToken
+	}
+
+	// Generate new token for this session
+	token, err := s.csrf.GenerateToken(sessionID)
+	if err != nil {
+		log.Printf("Failed to generate CSRF token: %v", err)
+		return ""
+	}
+
+	return token
 }

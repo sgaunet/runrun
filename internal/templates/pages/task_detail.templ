@@ -80,38 +80,45 @@ templ taskDetailContent(data TaskDetailPageData) {
 				}
 			</section>
 		</div>
-	<script>
-		const TASK_NAME = { templ.JSONString(data.TaskName) };
+	@taskScript(data.TaskName, data.BaseData.CSRFToken)
+}
 
-		function runTask() {
-			if (!confirm('Run task "' + TASK_NAME + '"?')) return;
+// taskScript generates the task execution JavaScript with CSRF token
+script taskScript(taskName string, csrfToken string) {
+	const TASK_NAME = taskName;
+	const CSRF_TOKEN = csrfToken;
 
-			const btn = event.target;
-			btn.disabled = true;
-			btn.textContent = 'Starting...';
+	window.runTask = function() {
+		if (!confirm('Run task "' + TASK_NAME + '"?')) return;
 
-			fetch('/tasks/' + TASK_NAME + '/execute', {
-				method: 'POST',
-				credentials: 'same-origin'
-			})
-				.then(res => res.json())
-				.then(data => {
-					if (data.success) {
-						alert(data.message || 'Task started successfully');
-						location.reload();
-					} else {
-						alert('Error: ' + (data.message || 'Failed to start task'));
-						btn.disabled = false;
-						btn.textContent = 'Run Task';
-					}
-				})
-				.catch(err => {
-					alert('Failed to start task: ' + err);
+		const btn = event.target;
+		btn.disabled = true;
+		btn.textContent = 'Starting...';
+
+		fetch('/tasks/' + TASK_NAME + '/execute', {
+			method: 'POST',
+			credentials: 'same-origin',
+			headers: {
+				'X-CSRF-Token': CSRF_TOKEN
+			}
+		})
+			.then(res => res.json())
+			.then(data => {
+				if (data.success) {
+					alert(data.message || 'Task started successfully');
+					location.reload();
+				} else {
+					alert('Error: ' + (data.message || 'Failed to start task'));
 					btn.disabled = false;
 					btn.textContent = 'Run Task';
-				});
-		}
-	</script>
+				}
+			})
+			.catch(err => {
+				alert('Failed to start task: ' + err);
+				btn.disabled = false;
+				btn.textContent = 'Run Task';
+			});
+	}
 }
 
 // TaskDetailPageData contains data for the task detail page

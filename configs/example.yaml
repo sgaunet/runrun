@@ -25,6 +25,12 @@ tasks:
     steps:
       - name: "Print message"
         command: "echo 'Hello, World!'"
+      - name: "sleep 10 seconds"
+        command: "sleep 10"
+      - name: "Print message"
+        command: "echo 'Hello, World!'"
+      - name: "Print message"
+        command: "echo 'Hello, World!'"
 
   - name: "system-info"
     description: "Display system information"

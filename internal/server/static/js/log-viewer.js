@@ -274,6 +274,10 @@ class LogViewer {
         });
     }
 
+    getAllLinesAsText() {
+        return this.lines.map(line => line.text).join('\n');
+    }
+
     // Batch add lines for better performance
     addLines(lines) {
         lines.forEach(line => {

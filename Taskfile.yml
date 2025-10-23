@@ -19,8 +19,6 @@ tasks:
       - echo "Generating templ templates..."
       - templ generate
       - echo "Template generation complete"
-    sources:
-      - internal/templates/**/*.templ
 
   build-css:
     desc: "Build CSS with Tailwind"

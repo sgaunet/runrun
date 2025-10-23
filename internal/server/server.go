@@ -21,12 +21,14 @@ type Server struct {
 	wsHub         *websocket.Hub
 	wsHandler     *websocket.Handler
 	wsBroadcaster *websocket.Broadcaster
+	startTime     time.Time
 }
 
 // New creates a new server instance
 func New(cfg *config.Config) *Server {
 	s := &Server{
-		config: cfg,
+		config:    cfg,
+		startTime: time.Now(),
 	}
 
 	// Initialize authentication service

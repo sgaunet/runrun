@@ -16,8 +16,10 @@ func (s *Server) SetupRoutes() {
 		r.Post("/login", s.authService.LoginHandler)
 		r.Post("/logout", s.authService.LogoutHandler)
 
-		// Health check
+		// Health check endpoints
 		r.Get("/health", s.healthCheckHandler)
+		r.Get("/health/ready", s.readinessHandler)
+		r.Get("/health/live", s.livenessHandler)
 
 		// Static assets
 		r.Handle("/static/*", http.StripPrefix("/static/", s.serveStaticFiles()))

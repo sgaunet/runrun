@@ -16,14 +16,93 @@ import (
 	"github.com/sgaunet/runrun/internal/templates/pages"
 )
 
-// healthCheckHandler handles health check requests
+// HealthResponse represents the health check response
+type HealthResponse struct {
+	Status    string            `json:"status"`
+	Version   string            `json:"version"`
+	Timestamp string            `json:"timestamp"`
+	Uptime    string            `json:"uptime,omitempty"`
+	Checks    map[string]string `json:"checks,omitempty"`
+}
+
+// healthCheckHandler handles basic health check requests
 func (s *Server) healthCheckHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+
+	response := HealthResponse{
+		Status:    "healthy",
+		Version:   "1.0.0",
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		Uptime:    time.Since(s.startTime).String(),
+	}
+
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{
-		"status": "ok",
-		"version": "1.0.0",
-	})
+	json.NewEncoder(w).Encode(response)
+}
+
+// readinessHandler handles readiness probe requests
+// Returns 200 if the server is ready to accept traffic, 503 otherwise
+func (s *Server) readinessHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	checks := make(map[string]string)
+	isReady := true
+
+	// Check if executor is running
+	if s.executor != nil {
+		checks["executor"] = "ok"
+	} else {
+		checks["executor"] = "not initialized"
+		isReady = false
+	}
+
+	// Check if configuration is loaded
+	if s.config != nil {
+		checks["config"] = "ok"
+	} else {
+		checks["config"] = "not loaded"
+		isReady = false
+	}
+
+	// Check if router is set up
+	if s.router != nil {
+		checks["router"] = "ok"
+	} else {
+		checks["router"] = "not initialized"
+		isReady = false
+	}
+
+	response := HealthResponse{
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		Version:   "1.0.0",
+		Checks:    checks,
+	}
+
+	if isReady {
+		response.Status = "ready"
+		w.WriteHeader(http.StatusOK)
+	} else {
+		response.Status = "not ready"
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}
+
+	json.NewEncoder(w).Encode(response)
+}
+
+// livenessHandler handles liveness probe requests
+// Returns 200 if the server is alive and functioning
+func (s *Server) livenessHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	response := HealthResponse{
+		Status:    "alive",
+		Version:   "1.0.0",
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		Uptime:    time.Since(s.startTime).String(),
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(response)
 }
 
 // dashboardHandler serves the main dashboard page

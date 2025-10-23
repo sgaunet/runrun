@@ -9,14 +9,18 @@ import (
 	"github.com/sgaunet/runrun/internal/auth"
 	"github.com/sgaunet/runrun/internal/config"
 	"github.com/sgaunet/runrun/internal/executor"
+	"github.com/sgaunet/runrun/internal/websocket"
 )
 
 // Server represents the HTTP server
 type Server struct {
-	router      *chi.Mux
-	authService *auth.Service
-	executor    *executor.TaskExecutor
-	config      *config.Config
+	router        *chi.Mux
+	authService   *auth.Service
+	executor      *executor.TaskExecutor
+	config        *config.Config
+	wsHub         *websocket.Hub
+	wsHandler     *websocket.Handler
+	wsBroadcaster *websocket.Broadcaster
 }
 
 // New creates a new server instance
@@ -40,6 +44,14 @@ func New(cfg *config.Config) *Server {
 		cfg.Server.ShutdownTimeout,
 	)
 
+	// Initialize WebSocket hub
+	s.wsHub = websocket.NewHub()
+	s.wsHandler = websocket.NewHandler(s.wsHub, websocket.DefaultConfig())
+	s.wsBroadcaster = websocket.NewBroadcaster(s.wsHub)
+
+	// Start WebSocket hub
+	go s.wsHub.Run()
+
 	// Set up router
 	s.setupRouter()
 
@@ -52,6 +64,11 @@ func New(cfg *config.Config) *Server {
 // Shutdown gracefully shuts down the server
 func (s *Server) Shutdown() error {
 	log.Println("Shutting down server...")
+
+	// Shutdown WebSocket hub
+	s.wsHub.Shutdown()
+
+	// Shutdown executor
 	if err := s.executor.Shutdown(); err != nil {
 		log.Printf("Executor shutdown error: %v", err)
 		return err
@@ -93,4 +110,9 @@ func (s *Server) sessionCleanupWorker() {
 		s.authService.CleanupExpiredSessions()
 		log.Println("Cleaned up expired sessions")
 	}
+}
+
+// GetWebSocketBroadcaster returns the WebSocket broadcaster
+func (s *Server) GetWebSocketBroadcaster() *websocket.Broadcaster {
+	return s.wsBroadcaster
 }

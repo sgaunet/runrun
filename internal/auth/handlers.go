@@ -31,12 +31,20 @@ func (s *Service) LoginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse request body
+	// Parse request based on Content-Type
 	var req LoginRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		// Try form data as fallback
+	contentType := r.Header.Get("Content-Type")
+
+	if contentType == "application/json" {
+		// Parse as JSON
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid JSON request", http.StatusBadRequest)
+			return
+		}
+	} else {
+		// Parse as form data (default for browser forms)
 		if err := r.ParseForm(); err != nil {
-			http.Error(w, "Invalid request", http.StatusBadRequest)
+			http.Error(w, "Invalid form request", http.StatusBadRequest)
 			return
 		}
 		req.Username = r.FormValue("username")
@@ -47,11 +55,22 @@ func (s *Service) LoginHandler(w http.ResponseWriter, r *http.Request) {
 	token, err := s.Authenticate(req.Username, req.Password)
 	if err != nil {
 		log.Printf("Login failed for user %s: %v", req.Username, err)
-		w.WriteHeader(http.StatusUnauthorized)
-		json.NewEncoder(w).Encode(LoginResponse{
-			Success: false,
-			Message: "Invalid username or password",
-		})
+
+		// Check if this is a browser form submission or API call
+		acceptHeader := r.Header.Get("Accept")
+
+		// If JSON was sent or JSON is explicitly requested, return JSON error
+		if contentType == "application/json" || acceptHeader == "application/json" {
+			w.WriteHeader(http.StatusUnauthorized)
+			json.NewEncoder(w).Encode(LoginResponse{
+				Success: false,
+				Message: "Invalid username or password",
+			})
+			return
+		}
+
+		// Otherwise, redirect back to login page with error (browser form submission)
+		http.Redirect(w, r, "/login?error=Invalid+username+or+password", http.StatusSeeOther)
 		return
 	}
 
@@ -68,12 +87,21 @@ func (s *Service) LoginHandler(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("User %s logged in successfully", req.Username)
 
-	// Return success response
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(LoginResponse{
-		Success: true,
-		Message: "Login successful",
-	})
+	// Check if this is a browser form submission or API call
+	acceptHeader := r.Header.Get("Accept")
+
+	// If JSON was sent or JSON is explicitly requested, return JSON
+	if contentType == "application/json" || acceptHeader == "application/json" {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(LoginResponse{
+			Success: true,
+			Message: "Login successful",
+		})
+		return
+	}
+
+	// Otherwise, redirect to dashboard (browser form submission)
+	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
 // LogoutHandler handles user logout requests

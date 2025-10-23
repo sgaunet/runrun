@@ -1,0 +1,234 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Custom base styles */
+@layer base {
+  body {
+    @apply bg-gray-50 text-gray-900;
+  }
+
+  h1 {
+    @apply text-3xl font-bold;
+  }
+
+  h2 {
+    @apply text-2xl font-semibold;
+  }
+
+  h3 {
+    @apply text-xl font-semibold;
+  }
+}
+
+/* Custom component styles */
+@layer components {
+  /* Task Card */
+  .task-card {
+    @apply bg-white rounded-lg shadow-md p-6 hover:shadow-lg transition-shadow duration-200;
+  }
+
+  .task-card-header {
+    @apply flex justify-between items-start mb-4;
+  }
+
+  .task-title {
+    @apply text-xl font-semibold text-gray-900;
+  }
+
+  .task-description {
+    @apply text-gray-600 mb-4;
+  }
+
+  .task-tags {
+    @apply flex flex-wrap gap-2 mb-4;
+  }
+
+  .task-actions {
+    @apply flex gap-2 justify-end;
+  }
+
+  /* Status Badges */
+  .status-badge {
+    @apply px-3 py-1 rounded-full text-sm font-medium;
+  }
+
+  .status-idle {
+    @apply bg-gray-200 text-gray-700;
+  }
+
+  .status-running {
+    @apply bg-primary-100 text-primary-700;
+  }
+
+  .status-success {
+    @apply bg-success-100 text-success-700;
+  }
+
+  .status-failed {
+    @apply bg-danger-100 text-danger-700;
+  }
+
+  .status-pending {
+    @apply bg-warning-100 text-warning-700;
+  }
+
+  /* Buttons */
+  .btn {
+    @apply px-4 py-2 rounded-lg font-medium transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2;
+  }
+
+  .btn-primary {
+    @apply bg-primary-600 text-white hover:bg-primary-700 focus:ring-primary-500;
+  }
+
+  .btn-secondary {
+    @apply bg-gray-200 text-gray-800 hover:bg-gray-300 focus:ring-gray-500;
+  }
+
+  .btn-danger {
+    @apply bg-danger-600 text-white hover:bg-danger-700 focus:ring-danger-500;
+  }
+
+  .btn-success {
+    @apply bg-success-600 text-white hover:bg-success-700 focus:ring-success-500;
+  }
+
+  /* Forms */
+  .form-input {
+    @apply w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent;
+  }
+
+  .form-input-error {
+    @apply border-danger-500 focus:ring-danger-500;
+  }
+
+  .form-label {
+    @apply block text-sm font-medium text-gray-700 mb-1;
+  }
+
+  .form-error {
+    @apply text-sm text-danger-600 mt-1;
+  }
+
+  /* Navigation */
+  .nav {
+    @apply bg-white shadow-md;
+  }
+
+  .nav-container {
+    @apply container mx-auto px-4 py-4 flex justify-between items-center;
+  }
+
+  .nav-brand {
+    @apply text-2xl font-bold text-primary-600;
+  }
+
+  .nav-links {
+    @apply flex gap-4 items-center;
+  }
+
+  /* Tags */
+  .tag {
+    @apply px-2 py-1 bg-primary-100 text-primary-700 rounded text-sm;
+  }
+
+  /* Container */
+  .container {
+    @apply max-w-7xl mx-auto px-4 sm:px-6 lg:px-8;
+  }
+
+  /* Task Grid */
+  .task-grid {
+    @apply grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6;
+  }
+
+  /* Log Container */
+  .log-container {
+    @apply bg-gray-900 text-gray-100 p-4 rounded-lg font-mono text-sm overflow-auto max-h-96;
+  }
+
+  .log-line {
+    @apply whitespace-pre-wrap break-words;
+  }
+
+  /* Login Container */
+  .login-container {
+    @apply min-h-screen flex items-center justify-center bg-gray-100;
+  }
+
+  .login-form {
+    @apply bg-white p-8 rounded-lg shadow-lg w-full max-w-md;
+  }
+
+  /* Alert */
+  .alert {
+    @apply p-4 rounded-lg mb-4;
+  }
+
+  .alert-error {
+    @apply bg-danger-100 text-danger-700 border border-danger-200;
+  }
+
+  .alert-success {
+    @apply bg-success-100 text-success-700 border border-success-200;
+  }
+
+  .alert-info {
+    @apply bg-primary-100 text-primary-700 border border-primary-200;
+  }
+
+  /* Loading Spinner */
+  .spinner {
+    @apply animate-spin rounded-full border-4 border-gray-200 border-t-primary-600;
+  }
+
+  /* Table */
+  .table {
+    @apply w-full border-collapse;
+  }
+
+  .table th {
+    @apply bg-gray-100 text-left px-4 py-2 font-semibold text-gray-700;
+  }
+
+  .table td {
+    @apply border-t border-gray-200 px-4 py-2;
+  }
+
+  .table tr:hover {
+    @apply bg-gray-50;
+  }
+}
+
+/* Custom utilities */
+@layer utilities {
+  .mt-2 {
+    margin-top: 0.5rem;
+  }
+
+  .mt-3 {
+    margin-top: 0.75rem;
+  }
+
+  .scrollbar-thin {
+    scrollbar-width: thin;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-track {
+    @apply bg-gray-200;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    @apply bg-gray-400 rounded;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    @apply bg-gray-500;
+  }
+}

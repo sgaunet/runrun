@@ -1,0 +1,36 @@
+package components
+
+import (
+	"github.com/sgaunet/runrun/internal/templates"
+)
+
+templ TaskCard(task templates.TaskCard) {
+	<div class="task-card">
+		<div class="task-card-header">
+			<h3 class="task-title">{ task.Name }</h3>
+			<span class={ "status-badge", "status-" + task.Status }>{ task.Status }</span>
+		</div>
+		<p class="task-description">{ task.Description }</p>
+		if len(task.Tags) > 0 {
+			<div class="task-tags">
+				for _, tag := range task.Tags {
+					<span class="tag">{ tag }</span>
+				}
+			</div>
+		}
+		if task.LastRun != nil {
+			<div class="task-meta">
+				<span class="last-run">Last run: { task.LastRun.Format("2006-01-02 15:04:05") }</span>
+			</div>
+		}
+		<div class="task-actions">
+			<a href={ templ.URL("/tasks/" + task.Name) } class="btn btn-secondary">View Details</a>
+			<button
+				onclick={ templ.ComponentScript{Call: "runTask('" + task.Name + "')"} }
+				class="btn btn-primary"
+			>
+				Run Now
+			</button>
+		</div>
+	</div>
+}

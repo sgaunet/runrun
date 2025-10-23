@@ -1,0 +1,132 @@
+package pages
+
+import (
+	"github.com/sgaunet/runrun/internal/templates/layouts"
+)
+
+templ Logs(data LogsPageData) {
+	@layouts.Base(data.BaseData, logsContent(data))
+}
+
+templ logsContent(data LogsPageData) {
+	<div class="py-6">
+		<div class="mb-6">
+			<a href={ templ.URL("/tasks/" + data.TaskName) } class="text-primary-600 hover:text-primary-700 flex items-center gap-1">
+				<span>&larr;</span>
+				<span>Back to Task</span>
+			</a>
+		</div>
+		<div class="mb-6">
+			<h2 class="text-3xl font-bold text-gray-900 mb-2">Execution Logs</h2>
+			<div class="flex flex-wrap gap-4 text-sm text-gray-600">
+				<div>
+					<span class="font-semibold">Execution ID:</span>
+					<code class="ml-2 bg-gray-100 px-2 py-1 rounded">{ data.ExecutionID }</code>
+				</div>
+				<div>
+					<span class="font-semibold">Task:</span>
+					<span class="ml-2">{ data.TaskName }</span>
+				</div>
+				<div>
+					<span class="font-semibold">Status:</span>
+					<span class={ "ml-2 status-badge", "status-" + data.Status }>{ data.Status }</span>
+				</div>
+			</div>
+		</div>
+		<div id="logViewerContainer"></div>
+	</div>
+	<script src="/static/js/vendor/ansi_up.min.js"></script>
+	<script src="/static/js/log-viewer.js"></script>
+	<script>
+		// Initialize log viewer
+		const logViewer = new LogViewer('logViewerContainer', {
+			autoScroll: true,
+			showLineNumbers: true,
+			showTimestamps: true
+		});
+
+		// Connect to WebSocket for real-time logs
+		const executionID = "{ data.ExecutionID }";
+		const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+		const wsUrl = `${protocol}//${window.location.host}/logs/ws/${executionID}`;
+
+		let ws = null;
+		let reconnectAttempts = 0;
+		const maxReconnectAttempts = 5;
+
+		function connectWebSocket() {
+			ws = new WebSocket(wsUrl);
+
+			ws.onopen = () => {
+				console.log('WebSocket connected');
+				reconnectAttempts = 0;
+			};
+
+			ws.onmessage = (event) => {
+				try {
+					const message = JSON.parse(event.data);
+					if (message.type === 'log' && message.data) {
+						logViewer.addLine(message.data.line, {
+							timestamp: new Date(message.data.timestamp),
+							level: message.data.level
+						});
+					}
+				} catch (e) {
+					console.error('Failed to parse WebSocket message:', e);
+				}
+			};
+
+			ws.onerror = (error) => {
+				console.error('WebSocket error:', error);
+			};
+
+			ws.onclose = () => {
+				console.log('WebSocket closed');
+				if (reconnectAttempts < maxReconnectAttempts) {
+					reconnectAttempts++;
+					const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
+					console.log(`Reconnecting in ${delay}ms (attempt ${reconnectAttempts}/${maxReconnectAttempts})`);
+					setTimeout(connectWebSocket, delay);
+				} else {
+					console.log('Max reconnect attempts reached, falling back to polling');
+					startPolling();
+				}
+			};
+		}
+
+		// HTTP polling fallback
+		let pollInterval = null;
+		function startPolling() {
+			if (pollInterval) return;
+
+			pollInterval = setInterval(() => {
+				fetch(`/api/logs/${executionID}/poll?lines=100`)
+					.then(res => res.json())
+					.then(data => {
+						if (data.logs && data.logs.length > 0) {
+							logViewer.clear();
+							logViewer.addLines(data.logs);
+						}
+					})
+					.catch(err => console.error('Polling error:', err));
+			}, 3000);
+		}
+
+		// Start WebSocket connection
+		connectWebSocket();
+
+		// Cleanup on page unload
+		window.addEventListener('beforeunload', () => {
+			if (ws) ws.close();
+			if (pollInterval) clearInterval(pollInterval);
+		});
+	</script>
+}
+
+// LogsPageData contains data for the logs page
+type LogsPageData struct {
+	BaseData    layouts.BaseData
+	ExecutionID string
+	TaskName    string
+	Status      string
+}

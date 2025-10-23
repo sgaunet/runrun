@@ -5,11 +5,15 @@ import (
 	"fmt"
 	"html"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/sgaunet/runrun/internal/auth"
 	"github.com/sgaunet/runrun/internal/config"
 	"github.com/sgaunet/runrun/internal/executor"
+	"github.com/sgaunet/runrun/internal/templates"
+	"github.com/sgaunet/runrun/internal/templates/layouts"
+	"github.com/sgaunet/runrun/internal/templates/pages"
 )
 
 // healthCheckHandler handles health check requests
@@ -32,7 +36,7 @@ func (s *Server) dashboardHandler(w http.ResponseWriter, r *http.Request) {
 <html>
 <head>
     <title>RunRun - Dashboard</title>
-    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="/static/css/styles.css">
 </head>
 <body>
     <nav>
@@ -109,7 +113,7 @@ func (s *Server) taskDetailHandler(w http.ResponseWriter, r *http.Request) {
 <html>
 <head>
     <title>RunRun - %s</title>
-    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="/static/css/styles.css">
 </head>
 <body>
     <nav>
@@ -245,7 +249,7 @@ func (s *Server) viewLogsHandler(w http.ResponseWriter, r *http.Request) {
 <html>
 <head>
     <title>RunRun - Logs %s</title>
-    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="/static/css/styles.css">
 </head>
 <body>
     <nav>
@@ -313,10 +317,200 @@ func (s *Server) downloadLogsHandler(w http.ResponseWriter, r *http.Request) {
 	w.Write(content)
 }
 
-// logWebSocketHandler handles WebSocket connections for live log streaming
-func (s *Server) logWebSocketHandler(w http.ResponseWriter, r *http.Request) {
+// pollLogsHandler provides HTTP polling fallback for clients without WebSocket
+func (s *Server) pollLogsHandler(w http.ResponseWriter, r *http.Request) {
 	executionID := chi.URLParam(r, "executionID")
 
-	// TODO: Implement WebSocket connection for live logs
-	http.Error(w, fmt.Sprintf("WebSocket not yet implemented for execution: %s", executionID), http.StatusNotImplemented)
+	// Get execution from executor
+	execution, err := s.executor.GetExecution(executionID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Execution not found: %v", err), http.StatusNotFound)
+		return
+	}
+
+	// Determine how many lines to return (default: all, or tail N lines)
+	lines := 100 // Default tail lines
+	if linesParam := r.URL.Query().Get("lines"); linesParam != "" {
+		fmt.Sscanf(linesParam, "%d", &lines)
+	}
+
+	var logLines []string
+	if execution.LogFilePath != "" {
+		// Read log file tail
+		tailLines, err := executor.TailLogFile(execution.LogFilePath, lines)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Failed to read log file: %v", err), http.StatusInternalServerError)
+			return
+		}
+		logLines = tailLines
+	}
+
+	// Return JSON response
+	response := map[string]interface{}{
+		"execution_id": execution.ID,
+		"task_name":    execution.TaskName,
+		"status":       execution.Status,
+		"started_at":   execution.StartedAt,
+		"finished_at":  execution.FinishedAt,
+		"logs":         logLines,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	json.NewEncoder(w).Encode(response)
+}
+
+
+// Templ-based handlers
+
+// dashboardHandlerTempl serves the dashboard using templ templates
+func (s *Server) dashboardHandlerTempl(w http.ResponseWriter, r *http.Request) {
+	username := auth.GetUsernameFromContext(r)
+
+	// Build task cards from config
+	taskCards := make([]templates.TaskCard, 0, len(s.config.Tasks))
+	for _, task := range s.config.Tasks {
+		card := templates.TaskCard{
+			Name:        task.Name,
+			Description: task.Description,
+			Tags:        task.Tags,
+			Status:      "idle",
+			LastRun:     nil,
+		}
+		taskCards = append(taskCards, card)
+	}
+
+	// Prepare page data
+	data := pages.DashboardPageData{
+		BaseData: layouts.BaseData{
+			Title:       "Dashboard",
+			CurrentUser: username,
+			CSRFToken:   "",
+		},
+		Tasks: taskCards,
+	}
+
+	// Render template
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := pages.Dashboard(data).Render(r.Context(), w); err != nil {
+		http.Error(w, "Failed to render template", http.StatusInternalServerError)
+		return
+	}
+}
+
+// taskDetailHandlerTempl serves the task detail page using templ templates
+func (s *Server) taskDetailHandlerTempl(w http.ResponseWriter, r *http.Request) {
+	taskName := chi.URLParam(r, "taskName")
+	username := auth.GetUsernameFromContext(r)
+
+	// Find task in config
+	var task *config.Task
+	for i := range s.config.Tasks {
+		if s.config.Tasks[i].Name == taskName {
+			task = &s.config.Tasks[i]
+			break
+		}
+	}
+
+	if task == nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	// Get execution history for this task
+	executions, err := s.executor.ListExecutions(taskName)
+	taskExecutions := make([]templates.ExecutionInfo, 0)
+	if err == nil {
+		for _, exec := range executions {
+			duration := "N/A"
+			if exec.FinishedAt != nil {
+				duration = exec.Duration.String()
+			} else if exec.Status == executor.StatusRunning {
+				duration = time.Since(exec.StartedAt).Round(time.Second).String()
+			}
+
+			taskExecutions = append(taskExecutions, templates.ExecutionInfo{
+				ID:         exec.ID,
+				Status:     string(exec.Status),
+				StartedAt:  exec.StartedAt,
+				FinishedAt: exec.FinishedAt,
+				Duration:   duration,
+			})
+		}
+	}
+
+	// Prepare page data
+	data := pages.TaskDetailPageData{
+		BaseData: layouts.BaseData{
+			Title:       task.Name,
+			CurrentUser: username,
+			CSRFToken:   "",
+		},
+		TaskName:    task.Name,
+		Description: task.Description,
+		Tags:        task.Tags,
+		Status:      "idle",
+		Executions:  taskExecutions,
+	}
+
+	// Render template
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := pages.TaskDetail(data).Render(r.Context(), w); err != nil {
+		http.Error(w, "Failed to render template", http.StatusInternalServerError)
+		return
+	}
+}
+
+// loginPageHandlerTempl serves the login page using templ templates
+func (s *Server) loginPageHandlerTempl(w http.ResponseWriter, r *http.Request) {
+	// Get error from query parameter if present
+	errorMsg := r.URL.Query().Get("error")
+
+	data := pages.LoginPageData{
+		BaseData: layouts.BaseData{
+			Title:       "Login",
+			CurrentUser: "",
+			CSRFToken:   "",
+		},
+		Error: errorMsg,
+	}
+
+	// Render template
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := pages.Login(data).Render(r.Context(), w); err != nil {
+		http.Error(w, "Failed to render template", http.StatusInternalServerError)
+		return
+	}
+}
+
+// viewLogsHandlerTempl serves the logs page using templ templates
+func (s *Server) viewLogsHandlerTempl(w http.ResponseWriter, r *http.Request) {
+	executionID := chi.URLParam(r, "executionID")
+	username := auth.GetUsernameFromContext(r)
+
+	// Get execution from executor
+	execution, err := s.executor.GetExecution(executionID)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	// Prepare page data
+	data := pages.LogsPageData{
+		BaseData: layouts.BaseData{
+			Title:       "Logs - " + execution.TaskName,
+			CurrentUser: username,
+			CSRFToken:   "",
+		},
+		ExecutionID: executionID,
+		TaskName:    execution.TaskName,
+		Status:      string(execution.Status),
+	}
+
+	// Render template
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := pages.Logs(data).Render(r.Context(), w); err != nil {
+		http.Error(w, "Failed to render template", http.StatusInternalServerError)
+		return
+	}
 }

@@ -1,0 +1,33 @@
+package layouts
+
+import "github.com/sgaunet/runrun/internal/templates/components"
+
+templ Base(data BaseData, content templ.Component) {
+	<!DOCTYPE html>
+	<html lang="en">
+		<head>
+			<meta charset="UTF-8"/>
+			<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+			<meta name="description" content="RunRun - Task execution platform"/>
+			<title>{ data.Title } - RunRun</title>
+			<link rel="stylesheet" href="/static/css/styles.css"/>
+		</head>
+		<body>
+			if data.CurrentUser != "" {
+				@components.Header(data.CurrentUser)
+			}
+			<main class="container">
+				@content
+			</main>
+			@components.Footer()
+			<script src="/static/js/main.js"></script>
+		</body>
+	</html>
+}
+
+// BaseData contains data available to all templates
+type BaseData struct {
+	Title       string
+	CurrentUser string
+	CSRFToken   string
+}

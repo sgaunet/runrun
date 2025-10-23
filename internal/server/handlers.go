@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"time"
 
@@ -481,8 +482,31 @@ var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
 	CheckOrigin: func(r *http.Request) bool {
-		// Allow connections from same origin
-		return true
+		// Validate origin to prevent CSRF attacks on WebSocket connections
+		origin := r.Header.Get("Origin")
+		if origin == "" {
+			// No origin header - allow (some clients don't send it)
+			return true
+		}
+
+		// Parse origin URL
+		originURL, err := url.Parse(origin)
+		if err != nil {
+			log.Printf("Invalid origin URL: %s - %v", origin, err)
+			return false
+		}
+
+		// Get expected host from request
+		expectedHost := r.Host
+
+		// Compare origin host with request host (same-origin policy)
+		if originURL.Host == expectedHost {
+			return true
+		}
+
+		// Log rejected origin for security monitoring
+		log.Printf("WebSocket origin rejected: %s (expected: %s)", originURL.Host, expectedHost)
+		return false
 	},
 }
 
@@ -501,28 +525,26 @@ func (s *Server) wsLogsHandler(w http.ResponseWriter, r *http.Request) {
 	// If no cookie, try Authorization header
 	if token == "" {
 		authHeader := r.Header.Get("Authorization")
-		if authHeader != "" {
-			parts := []string{}
-			for _, part := range []string{authHeader} {
-				parts = append(parts, part)
-			}
-			if len(authHeader) > 7 && authHeader[:7] == "Bearer " {
-				token = authHeader[7:]
-			}
+		if authHeader != "" && len(authHeader) > 7 && authHeader[:7] == "Bearer " {
+			token = authHeader[7:]
 		}
 	}
 
 	// Validate session
 	if token == "" {
+		log.Printf("WebSocket auth failed for %s: no session token", executionID)
 		http.Error(w, "Unauthorized: no session token", http.StatusUnauthorized)
 		return
 	}
 
-	_, err = s.authService.ValidateSession(token)
+	username, err := s.authService.ValidateSession(token)
 	if err != nil {
+		log.Printf("WebSocket auth failed for %s: invalid session - %v", executionID, err)
 		http.Error(w, "Unauthorized: invalid session", http.StatusUnauthorized)
 		return
 	}
+
+	log.Printf("WebSocket connection authorized for user '%s' viewing execution %s", username, executionID)
 
 	// Get execution from executor
 	execution, err := s.executor.GetExecution(executionID)
@@ -539,20 +561,97 @@ func (s *Server) wsLogsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	// If no log file, send a message and close
+	// If no log file, check if execution is finished or in progress
 	if execution.LogFilePath == "" {
-		msg := map[string]interface{}{
-			"type": "log",
-			"data": map[string]interface{}{
-				"line":      "Waiting for execution to start...",
-				"timestamp": time.Now().Format(time.RFC3339),
-				"level":     "info",
-			},
+		if execution.FinishedAt != nil {
+			// Execution finished but log file is missing/deleted
+			msg := map[string]interface{}{
+				"type": "log",
+				"data": map[string]interface{}{
+					"line":      fmt.Sprintf("[Execution completed with status: %s]\n[Log file not available]", execution.Status),
+					"timestamp": execution.FinishedAt.Format(time.RFC3339),
+					"level":     "info",
+				},
+			}
+			conn.WriteJSON(msg)
+
+			// Keep connection open to prevent reconnect loop
+			// Wait for client to close or timeout
+			ticker := time.NewTicker(30 * time.Second)
+			defer ticker.Stop()
+
+			select {
+			case <-ticker.C:
+				// Timeout after 30 seconds
+				return
+			case <-r.Context().Done():
+				// Request cancelled
+				return
+			}
+		} else {
+			// Execution in progress - wait for log file to be created
+			msg := map[string]interface{}{
+				"type": "log",
+				"data": map[string]interface{}{
+					"line":      "Waiting for log output...",
+					"timestamp": time.Now().Format(time.RFC3339),
+					"level":     "info",
+				},
+			}
+			conn.WriteJSON(msg)
+
+			// Poll for log file to be created (executor sets LogFilePath after task completes)
+			pollTicker := time.NewTicker(500 * time.Millisecond)
+			defer pollTicker.Stop()
+
+			timeout := time.After(30 * time.Second)
+			for {
+				select {
+				case <-timeout:
+					// Timeout after 30 seconds
+					timeoutMsg := map[string]interface{}{
+						"type": "log",
+						"data": map[string]interface{}{
+							"line":      "[Timeout waiting for log file]",
+							"timestamp": time.Now().Format(time.RFC3339),
+							"level":     "warning",
+						},
+					}
+					conn.WriteJSON(timeoutMsg)
+					return
+				case <-r.Context().Done():
+					// Request cancelled
+					return
+				case <-pollTicker.C:
+					// Check if log file has been set
+					currentExec, err := s.executor.GetExecution(executionID)
+					if err != nil {
+						return
+					}
+					if currentExec.LogFilePath != "" {
+						// Log file created! Update execution and break out to stream it
+						execution = currentExec
+						goto openLogFile
+					}
+					// Check if execution finished without creating log file
+					if currentExec.FinishedAt != nil {
+						msg := map[string]interface{}{
+							"type": "log",
+							"data": map[string]interface{}{
+								"line":      fmt.Sprintf("[Execution completed with status: %s]\n[No log file created]", currentExec.Status),
+								"timestamp": currentExec.FinishedAt.Format(time.RFC3339),
+								"level":     "info",
+							},
+						}
+						conn.WriteJSON(msg)
+						return
+					}
+				}
+			}
 		}
-		conn.WriteJSON(msg)
-		time.Sleep(2 * time.Second) // Give client time to receive message
-		return
 	}
+
+openLogFile:
 
 	// Open log file
 	file, err := os.Open(execution.LogFilePath)
@@ -608,7 +707,7 @@ func (s *Server) wsLogsHandler(w http.ResponseWriter, r *http.Request) {
 						// Check if execution is finished
 						currentExec, _ := s.executor.GetExecution(executionID)
 						if currentExec != nil && currentExec.FinishedAt != nil {
-							// Execution finished, send final message and close
+							// Execution finished, send final message and keep connection open
 							msg := map[string]interface{}{
 								"type": "log",
 								"data": map[string]interface{}{
@@ -618,8 +717,20 @@ func (s *Server) wsLogsHandler(w http.ResponseWriter, r *http.Request) {
 								},
 							}
 							conn.WriteJSON(msg)
-							time.Sleep(500 * time.Millisecond)
-							return
+
+							// Keep connection open to prevent reconnect loop
+							// Wait for client to close or timeout
+							completeTicker := time.NewTicker(30 * time.Second)
+							defer completeTicker.Stop()
+
+							select {
+							case <-completeTicker.C:
+								// Timeout after 30 seconds
+								return
+							case <-r.Context().Done():
+								// Request cancelled
+								return
+							}
 						}
 						// No more lines available yet, break and wait
 						break

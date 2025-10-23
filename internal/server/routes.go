@@ -4,15 +4,23 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 )
 
 // SetupRoutes configures all application routes
 func (s *Server) SetupRoutes() {
 	r := s.router
 
-	// Public routes (no authentication required)
+	// WebSocket routes - NO compression middleware (breaks Hijacker interface)
+	r.Get("/logs/ws/{executionID}", s.wsLogsHandler)
+
+	// Apply compression middleware to all other routes
 	r.Group(func(r chi.Router) {
-		r.Get("/login", s.loginPageHandlerTempl)
+		r.Use(middleware.Compress(5))
+
+		// Public routes (no authentication required)
+		r.Group(func(r chi.Router) {
+			r.Get("/login", s.loginPageHandlerTempl)
 
 		// Apply rate limiting to login POST endpoint
 		r.Group(func(r chi.Router) {
@@ -29,9 +37,6 @@ func (s *Server) SetupRoutes() {
 
 		// Static assets
 		r.Handle("/static/*", http.StripPrefix("/static/", s.serveStaticFiles()))
-
-		// WebSocket endpoint - handles auth internally (middleware redirect doesn't work for WS)
-		r.Get("/logs/ws/{executionID}", s.wsLogsHandler)
 	})
 
 	// Protected routes (authentication required)
@@ -64,5 +69,6 @@ func (s *Server) SetupRoutes() {
 			r.Get("/{executionID}/download", s.downloadLogsHandler)
 			r.Get("/{executionID}/poll", s.pollLogsHandler)
 		})
+	})
 	})
 }

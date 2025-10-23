@@ -99,12 +99,14 @@ func (s *Server) setupRouter() {
 	r := chi.NewRouter()
 
 	// Middleware stack (order matters!)
+	// Apply these middleware to ALL routes
 	r.Use(customMiddleware.RequestIDMiddleware)   // Custom request ID with UUID
 	r.Use(customMiddleware.RecoveryMiddleware)    // Custom panic recovery
 	r.Use(customMiddleware.SecurityHeadersMiddleware) // Security headers
 	r.Use(customMiddleware.LoggingMiddleware)     // Custom logging
 	r.Use(middleware.RealIP)                      // Set RemoteAddr to real IP
-	r.Use(middleware.Compress(5))                 // Compress responses
+	// NOTE: Compression middleware is applied selectively in SetupRoutes
+	// because it wraps the response writer and breaks WebSocket upgrades
 	r.Use(customMiddleware.TimeoutMiddleware(60 * time.Second)) // Request timeout with custom handling
 
 	s.router = r

@@ -3,11 +3,13 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"html"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/sgaunet/runrun/internal/auth"
 	"github.com/sgaunet/runrun/internal/config"
+	"github.com/sgaunet/runrun/internal/executor"
 )
 
 // healthCheckHandler handles health check requests
@@ -216,6 +218,27 @@ func (s *Server) statusAPIHandler(w http.ResponseWriter, r *http.Request) {
 func (s *Server) viewLogsHandler(w http.ResponseWriter, r *http.Request) {
 	executionID := chi.URLParam(r, "executionID")
 
+	// Get execution from executor
+	execution, err := s.executor.GetExecution(executionID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Execution not found: %v", err), http.StatusNotFound)
+		return
+	}
+
+	// Read log file if it exists
+	var logContent string
+	if execution.LogFilePath != "" {
+		content, err := executor.ReadLogFile(execution.LogFilePath)
+		if err != nil {
+			logContent = fmt.Sprintf("Error reading log file: %v", err)
+		} else {
+			// Escape HTML but preserve formatting
+			logContent = html.EscapeString(string(content))
+		}
+	} else {
+		logContent = "Log file not yet created (execution may still be running)"
+	}
+
 	w.Header().Set("Content-Type", "text/html")
 	fmt.Fprintf(w, `
 <!DOCTYPE html>
@@ -227,15 +250,22 @@ func (s *Server) viewLogsHandler(w http.ResponseWriter, r *http.Request) {
 <body>
     <nav>
         <h1>RunRun</h1>
+        <div class="user-info">
+            <a href="/" class="btn btn-secondary">Back to Dashboard</a>
+        </div>
     </nav>
     <div class="container">
-        <h2>Execution Logs: %s</h2>
-        <button onclick="copyLogs()" class="btn btn-secondary">Copy</button>
-        <a href="/logs/%s/download" class="btn btn-secondary">Download</a>
+        <h2>Execution Logs</h2>
+        <p>Execution ID: %s</p>
+        <p>Task: %s</p>
+        <p>Status: %s</p>
 
-        <div class="log-container mt-2" id="logs">
-            <div class="log-line">Loading logs...</div>
+        <div style="margin-top: 1rem;">
+            <button onclick="copyLogs()" class="btn btn-secondary">Copy</button>
+            <a href="/logs/%s/download" class="btn btn-secondary">Download</a>
         </div>
+
+        <div class="log-container mt-2" id="logs">%s</div>
     </div>
     <script>
         function copyLogs() {
@@ -246,18 +276,41 @@ func (s *Server) viewLogsHandler(w http.ResponseWriter, r *http.Request) {
     </script>
 </body>
 </html>
-	`, executionID, executionID, executionID)
+	`, executionID, executionID, execution.TaskName, execution.Status, executionID, logContent)
 }
 
 // downloadLogsHandler handles log file downloads
 func (s *Server) downloadLogsHandler(w http.ResponseWriter, r *http.Request) {
 	executionID := chi.URLParam(r, "executionID")
 
-	// TODO: Implement actual log file serving
-	w.Header().Set("Content-Type", "text/plain")
-	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s.log\"", executionID))
-	fmt.Fprintf(w, "Log file for execution: %s\n", executionID)
-	fmt.Fprintf(w, "TODO: Implement actual log retrieval\n")
+	// Get execution from executor
+	execution, err := s.executor.GetExecution(executionID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Execution not found: %v", err), http.StatusNotFound)
+		return
+	}
+
+	// Read log file
+	if execution.LogFilePath == "" {
+		http.Error(w, "Log file not yet created (execution may still be running)", http.StatusNotFound)
+		return
+	}
+
+	content, err := executor.ReadLogFile(execution.LogFilePath)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to read log file: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Serve file for download
+	executionIDShort := executionID
+	if len(executionIDShort) > 8 {
+		executionIDShort = executionIDShort[:8]
+	}
+	filename := fmt.Sprintf("%s_%s.log", execution.TaskName, executionIDShort)
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filename))
+	w.Write(content)
 }
 
 // logWebSocketHandler handles WebSocket connections for live log streaming

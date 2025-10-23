@@ -2,7 +2,7 @@
 logs
 *.log
 /dist/
-
+/.task
 # Coverage
 coverage.txt
 *.coverprofile

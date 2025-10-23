@@ -8,12 +8,14 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/sgaunet/runrun/internal/auth"
 	"github.com/sgaunet/runrun/internal/config"
+	"github.com/sgaunet/runrun/internal/executor"
 )
 
 // Server represents the HTTP server
 type Server struct {
 	router      *chi.Mux
 	authService *auth.Service
+	executor    *executor.TaskExecutor
 	config      *config.Config
 }
 
@@ -31,6 +33,13 @@ func New(cfg *config.Config) *Server {
 		s.authService.AddUser(user.Username, user.Password)
 	}
 
+	// Initialize task executor
+	s.executor = executor.NewTaskExecutor(
+		cfg.Server.MaxConcurrentTasks,
+		cfg.Server.LogDirectory,
+		cfg.Server.ShutdownTimeout,
+	)
+
 	// Set up router
 	s.setupRouter()
 
@@ -38,6 +47,16 @@ func New(cfg *config.Config) *Server {
 	go s.sessionCleanupWorker()
 
 	return s
+}
+
+// Shutdown gracefully shuts down the server
+func (s *Server) Shutdown() error {
+	log.Println("Shutting down server...")
+	if err := s.executor.Shutdown(); err != nil {
+		log.Printf("Executor shutdown error: %v", err)
+		return err
+	}
+	return nil
 }
 
 // setupRouter configures the Chi router with middleware and routes

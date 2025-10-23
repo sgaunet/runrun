@@ -7,6 +7,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/sgaunet/runrun/internal/auth"
+	"github.com/sgaunet/runrun/internal/config"
 )
 
 // healthCheckHandler handles health check requests
@@ -155,12 +156,40 @@ func (s *Server) taskDetailHandler(w http.ResponseWriter, r *http.Request) {
 func (s *Server) executeTaskHandler(w http.ResponseWriter, r *http.Request) {
 	taskName := chi.URLParam(r, "taskName")
 
-	// TODO: Implement actual task execution
+	// Find task in config
+	var task *config.Task
+	for i := range s.config.Tasks {
+		if s.config.Tasks[i].Name == taskName {
+			task = &s.config.Tasks[i]
+			break
+		}
+	}
+
+	if task == nil {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"message": fmt.Sprintf("Task '%s' not found", taskName),
+		})
+		return
+	}
+
+	// Submit task for execution
+	executionID, err := s.executor.SubmitTask(task)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"message": fmt.Sprintf("Failed to queue task: %v", err),
+		})
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"success": true,
-		"message": fmt.Sprintf("Task '%s' execution queued", taskName),
-		"execution_id": "placeholder-id",
+		"success":      true,
+		"message":      fmt.Sprintf("Task '%s' execution queued", taskName),
+		"execution_id": executionID,
 	})
 }
 

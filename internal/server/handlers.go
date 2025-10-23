@@ -1,14 +1,18 @@
 package server
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"html"
+	"io"
 	"log"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/gorilla/websocket"
 	"github.com/sgaunet/runrun/internal/auth"
 	"github.com/sgaunet/runrun/internal/config"
 	"github.com/sgaunet/runrun/internal/executor"
@@ -472,6 +476,178 @@ func (s *Server) pollLogsHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
+// WebSocket upgrader
+var upgrader = websocket.Upgrader{
+	ReadBufferSize:  1024,
+	WriteBufferSize: 1024,
+	CheckOrigin: func(r *http.Request) bool {
+		// Allow connections from same origin
+		return true
+	},
+}
+
+// wsLogsHandler handles WebSocket connections for real-time log streaming
+func (s *Server) wsLogsHandler(w http.ResponseWriter, r *http.Request) {
+	executionID := chi.URLParam(r, "executionID")
+
+	// Manually validate authentication before upgrading to WebSocket
+	// The auth middleware's redirect doesn't work for WebSocket upgrades
+	token := ""
+	cookie, err := r.Cookie("session")
+	if err == nil {
+		token = cookie.Value
+	}
+
+	// If no cookie, try Authorization header
+	if token == "" {
+		authHeader := r.Header.Get("Authorization")
+		if authHeader != "" {
+			parts := []string{}
+			for _, part := range []string{authHeader} {
+				parts = append(parts, part)
+			}
+			if len(authHeader) > 7 && authHeader[:7] == "Bearer " {
+				token = authHeader[7:]
+			}
+		}
+	}
+
+	// Validate session
+	if token == "" {
+		http.Error(w, "Unauthorized: no session token", http.StatusUnauthorized)
+		return
+	}
+
+	_, err = s.authService.ValidateSession(token)
+	if err != nil {
+		http.Error(w, "Unauthorized: invalid session", http.StatusUnauthorized)
+		return
+	}
+
+	// Get execution from executor
+	execution, err := s.executor.GetExecution(executionID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Execution not found: %v", err), http.StatusNotFound)
+		return
+	}
+
+	// Upgrade HTTP connection to WebSocket
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Printf("WebSocket upgrade failed: %v", err)
+		return
+	}
+	defer conn.Close()
+
+	// If no log file, send a message and close
+	if execution.LogFilePath == "" {
+		msg := map[string]interface{}{
+			"type": "log",
+			"data": map[string]interface{}{
+				"line":      "Waiting for execution to start...",
+				"timestamp": time.Now().Format(time.RFC3339),
+				"level":     "info",
+			},
+		}
+		conn.WriteJSON(msg)
+		time.Sleep(2 * time.Second) // Give client time to receive message
+		return
+	}
+
+	// Open log file
+	file, err := os.Open(execution.LogFilePath)
+	if err != nil {
+		msg := map[string]interface{}{
+			"type": "error",
+			"data": map[string]interface{}{
+				"message": fmt.Sprintf("Failed to open log file: %v", err),
+			},
+		}
+		conn.WriteJSON(msg)
+		return
+	}
+	defer file.Close()
+
+	// Seek to beginning of file to stream all logs
+	_, err = file.Seek(0, 0)
+	if err != nil {
+		log.Printf("Failed to seek log file: %v", err)
+		return
+	}
+
+	// Create buffered reader for efficient line reading
+	reader := bufio.NewReader(file)
+
+	// Channel to signal when to stop
+	done := make(chan bool)
+
+	// Start goroutine to listen for client close messages
+	go func() {
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				close(done)
+				return
+			}
+		}
+	}()
+
+	// Stream log lines
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-done:
+			return
+		case <-ticker.C:
+			// Read all available lines
+			for {
+				line, err := reader.ReadString('\n')
+				if err != nil {
+					if err == io.EOF {
+						// Check if execution is finished
+						currentExec, _ := s.executor.GetExecution(executionID)
+						if currentExec != nil && currentExec.FinishedAt != nil {
+							// Execution finished, send final message and close
+							msg := map[string]interface{}{
+								"type": "log",
+								"data": map[string]interface{}{
+									"line":      fmt.Sprintf("\n[Execution finished with status: %s]", currentExec.Status),
+									"timestamp": currentExec.FinishedAt.Format(time.RFC3339),
+									"level":     "info",
+								},
+							}
+							conn.WriteJSON(msg)
+							time.Sleep(500 * time.Millisecond)
+							return
+						}
+						// No more lines available yet, break and wait
+						break
+					}
+					// Other error, close connection
+					log.Printf("Error reading log file: %v", err)
+					return
+				}
+
+				// Send line to client
+				msg := map[string]interface{}{
+					"type": "log",
+					"data": map[string]interface{}{
+						"line":      line,
+						"timestamp": time.Now().Format(time.RFC3339),
+						"level":     "info",
+					},
+				}
+
+				if err := conn.WriteJSON(msg); err != nil {
+					log.Printf("Error writing to WebSocket: %v", err)
+					return
+				}
+			}
+		}
+	}
+}
+
 
 // Templ-based handlers
 
@@ -530,12 +706,15 @@ func (s *Server) dashboardHandlerTempl(w http.ResponseWriter, r *http.Request) {
 		TotalExecutions: stats.Total,
 	}
 
+	// Get or generate CSRF token for this session
+	csrfToken := s.getCSRFToken(r)
+
 	// Prepare page data
 	data := pages.DashboardPageData{
 		BaseData: layouts.BaseData{
 			Title:       "Dashboard",
 			CurrentUser: username,
-			CSRFToken:   "",
+			CSRFToken:   csrfToken,
 		},
 		Tasks: taskCards,
 		Stats: dashboardStats,

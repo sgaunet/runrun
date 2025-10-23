@@ -56,7 +56,7 @@ templ logsContent(data LogsPageData) {
 		</div>
 		<div id="logViewerContainer"></div>
 	</div>
-	<script type="module" src="/static/js/vendor/ansi_up.min.js"></script>
+	<script type="module" src="/static/js/vendor/ansi_up_loader.js"></script>
 	<script src="/static/js/log-viewer.js"></script>
 	@logsScript(data.ExecutionID)
 }
@@ -65,119 +65,135 @@ templ logsContent(data LogsPageData) {
 script logsScript(executionID string) {
 	const EXECUTION_ID = executionID;
 
-	// Initialize log viewer
-	const logViewer = new LogViewer('logViewerContainer', {
-		autoScroll: true,
-		showLineNumbers: true,
-		showTimestamps: true
-	});
-
-	// Connect to WebSocket for real-time logs
-	const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-	const wsUrl = `${protocol}//${window.location.host}/logs/ws/${EXECUTION_ID}`;
-
-	let ws = null;
-	let reconnectAttempts = 0;
-	const maxReconnectAttempts = 5;
-
-	function connectWebSocket() {
-		ws = new WebSocket(wsUrl);
-
-		ws.onopen = () => {
-			console.log('WebSocket connected');
-			reconnectAttempts = 0;
-		};
-
-		ws.onmessage = (event) => {
-			try {
-				const message = JSON.parse(event.data);
-				if (message.type === 'log' && message.data) {
-					logViewer.addLine(message.data.line, {
-						timestamp: new Date(message.data.timestamp),
-						level: message.data.level
-					});
-				}
-			} catch (e) {
-				console.error('Failed to parse WebSocket message:', e);
-			}
-		};
-
-		ws.onerror = (error) => {
-			console.error('WebSocket error:', error);
-		};
-
-		ws.onclose = () => {
-			console.log('WebSocket closed');
-			if (reconnectAttempts < maxReconnectAttempts) {
-				reconnectAttempts++;
-				const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
-				console.log(`Reconnecting in ${delay}ms (attempt ${reconnectAttempts}/${maxReconnectAttempts})`);
-				setTimeout(connectWebSocket, delay);
-			} else {
-				console.log('Max reconnect attempts reached, falling back to polling');
-				startPolling();
-			}
-		};
-	}
-
-	// HTTP polling fallback
-	let pollInterval = null;
-	function startPolling() {
-		if (pollInterval) return;
-
-		pollInterval = setInterval(() => {
-			fetch(`/api/logs/${EXECUTION_ID}/poll?lines=100`)
-				.then(res => res.json())
-				.then(data => {
-					if (data.logs && data.logs.length > 0) {
-						logViewer.clear();
-						logViewer.addLines(data.logs);
-					}
-				})
-				.catch(err => console.error('Polling error:', err));
-		}, 3000);
-	}
-
-	// Copy logs to clipboard
-	window.copyLogs = function() {
-		const logsText = logViewer.getAllLinesAsText();
-		if (!logsText) {
-			alert('No logs to copy');
+	// Wait for AnsiUp to be loaded by the module before initializing
+	function initLogViewer() {
+		if (typeof window.AnsiUp === 'undefined') {
+			// AnsiUp not loaded yet, wait and retry
+			setTimeout(initLogViewer, 50);
 			return;
 		}
 
-		navigator.clipboard.writeText(logsText)
-			.then(() => {
-				const btn = event.target.closest('button');
-				const originalText = btn.innerHTML;
-				btn.innerHTML = '<svg class="w-4 h-4 inline mr-1" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"></path></svg>Copied!';
-				setTimeout(() => {
-					btn.innerHTML = originalText;
-				}, 2000);
-			})
-			.catch(err => {
-				console.error('Failed to copy logs:', err);
-				alert('Failed to copy logs to clipboard');
-			});
+		// Initialize log viewer
+		const logViewer = new LogViewer('logViewerContainer', {
+			autoScroll: true,
+			showLineNumbers: true,
+			showTimestamps: true
+		});
+
+		// Connect to WebSocket for real-time logs
+		const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+		const wsUrl = `${protocol}//${window.location.host}/logs/ws/${EXECUTION_ID}`;
+
+		let ws = null;
+		let reconnectAttempts = 0;
+		const maxReconnectAttempts = 5;
+
+		function connectWebSocket() {
+			ws = new WebSocket(wsUrl);
+
+			ws.onopen = () => {
+				console.log('WebSocket connected');
+				reconnectAttempts = 0;
+			};
+
+			ws.onmessage = (event) => {
+				try {
+					const message = JSON.parse(event.data);
+					if (message.type === 'log' && message.data) {
+						logViewer.addLine(message.data.line, {
+							timestamp: new Date(message.data.timestamp),
+							level: message.data.level
+						});
+					}
+				} catch (e) {
+					console.error('Failed to parse WebSocket message:', e);
+				}
+			};
+
+			ws.onerror = (error) => {
+				console.error('WebSocket error:', error);
+			};
+
+			ws.onclose = () => {
+				console.log('WebSocket closed');
+				if (reconnectAttempts < maxReconnectAttempts) {
+					reconnectAttempts++;
+					const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
+					console.log(`Reconnecting in ${delay}ms (attempt ${reconnectAttempts}/${maxReconnectAttempts})`);
+					setTimeout(connectWebSocket, delay);
+				} else {
+					console.log('Max reconnect attempts reached, falling back to polling');
+					startPolling();
+				}
+			};
+		}
+
+		// HTTP polling fallback
+		let pollInterval = null;
+		function startPolling() {
+			if (pollInterval) return;
+
+			pollInterval = setInterval(() => {
+				fetch(`/logs/${EXECUTION_ID}/poll?lines=100`)
+					.then(res => res.json())
+					.then(data => {
+						if (data.logs && data.logs.length > 0) {
+							logViewer.clear();
+							logViewer.addLines(data.logs);
+						}
+					})
+					.catch(err => console.error('Polling error:', err));
+			}, 3000);
+		}
+
+		// Copy logs to clipboard
+		window.copyLogs = function() {
+			const logsText = logViewer.getAllLinesAsText();
+			if (!logsText) {
+				alert('No logs to copy');
+				return;
+			}
+
+			navigator.clipboard.writeText(logsText)
+				.then(() => {
+					const btn = event.target.closest('button');
+					const originalText = btn.innerHTML;
+					btn.innerHTML = '<svg class="w-4 h-4 inline mr-1" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"></path></svg>Copied!';
+					setTimeout(() => {
+						btn.innerHTML = originalText;
+					}, 2000);
+				})
+				.catch(err => {
+					console.error('Failed to copy logs:', err);
+					alert('Failed to copy logs to clipboard');
+				});
+		}
+
+		// Toggle auto-scroll
+		window.toggleAutoScroll = function() {
+			logViewer.options.autoScroll = !logViewer.options.autoScroll;
+			const btn = document.getElementById('autoScrollBtn');
+			btn.innerHTML = logViewer.options.autoScroll
+				? '<svg class="w-4 h-4 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 13l-7 7-7-7m14-8l-7 7-7-7"></path></svg>Auto-scroll: ON'
+				: '<svg class="w-4 h-4 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 13l-7 7-7-7m14-8l-7 7-7-7"></path></svg>Auto-scroll: OFF';
+		}
+
+		// Start WebSocket connection
+		connectWebSocket();
+
+		// Cleanup on page unload
+		window.addEventListener('beforeunload', () => {
+			if (ws) ws.close();
+			if (pollInterval) clearInterval(pollInterval);
+		});
 	}
 
-	// Toggle auto-scroll
-	window.toggleAutoScroll = function() {
-		logViewer.options.autoScroll = !logViewer.options.autoScroll;
-		const btn = document.getElementById('autoScrollBtn');
-		btn.innerHTML = logViewer.options.autoScroll
-			? '<svg class="w-4 h-4 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 13l-7 7-7-7m14-8l-7 7-7-7"></path></svg>Auto-scroll: ON'
-			: '<svg class="w-4 h-4 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 13l-7 7-7-7m14-8l-7 7-7-7"></path></svg>Auto-scroll: OFF';
+	// Start initialization when DOM is ready
+	if (document.readyState === 'loading') {
+		document.addEventListener('DOMContentLoaded', initLogViewer);
+	} else {
+		initLogViewer();
 	}
-
-	// Start WebSocket connection
-	connectWebSocket();
-
-	// Cleanup on page unload
-	window.addEventListener('beforeunload', () => {
-		if (ws) ws.close();
-		if (pollInterval) clearInterval(pollInterval);
-	});
 }
 
 // LogsPageData contains data for the logs page

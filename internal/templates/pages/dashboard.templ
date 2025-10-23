@@ -17,31 +17,33 @@ templ dashboardContent(data DashboardPageData) {
 			<h2 class="text-3xl font-bold text-gray-900">Tasks Dashboard</h2>
 			<p class="mt-2 text-gray-600">Manage and execute your configured tasks</p>
 		</div>
-		<!-- Statistics Cards -->
-		<div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4 mb-8">
-			<div class="bg-white rounded-lg shadow p-4">
-				<div class="text-sm text-gray-500 uppercase tracking-wide">Total Tasks</div>
-				<div class="text-2xl font-bold text-gray-900 mt-1">{ fmt.Sprint(data.Stats.TotalTasks) }</div>
-			</div>
-			<div class="bg-blue-50 rounded-lg shadow p-4">
-				<div class="text-sm text-blue-700 uppercase tracking-wide">Running</div>
-				<div class="text-2xl font-bold text-blue-900 mt-1">{ fmt.Sprint(data.Stats.RunningTasks) }</div>
-			</div>
-			<div class="bg-green-50 rounded-lg shadow p-4">
-				<div class="text-sm text-green-700 uppercase tracking-wide">Success</div>
-				<div class="text-2xl font-bold text-green-900 mt-1">{ fmt.Sprint(data.Stats.SuccessTasks) }</div>
-			</div>
-			<div class="bg-red-50 rounded-lg shadow p-4">
-				<div class="text-sm text-red-700 uppercase tracking-wide">Failed</div>
-				<div class="text-2xl font-bold text-red-900 mt-1">{ fmt.Sprint(data.Stats.FailedTasks) }</div>
-			</div>
-			<div class="bg-gray-50 rounded-lg shadow p-4">
-				<div class="text-sm text-gray-500 uppercase tracking-wide">Idle</div>
-				<div class="text-2xl font-bold text-gray-700 mt-1">{ fmt.Sprint(data.Stats.IdleTasks) }</div>
-			</div>
-			<div class="bg-purple-50 rounded-lg shadow p-4">
-				<div class="text-sm text-purple-700 uppercase tracking-wide">Executions</div>
-				<div class="text-2xl font-bold text-purple-900 mt-1">{ fmt.Sprint(data.Stats.TotalExecutions) }</div>
+		<!-- Statistics Cards - Single Row Compact View -->
+		<div class="bg-white rounded-lg shadow mb-6 overflow-x-auto">
+			<div class="flex flex-nowrap divide-x divide-gray-200">
+				<div class="flex-1 px-3 py-2 text-center min-w-[100px]">
+					<div class="text-xs text-gray-500 uppercase tracking-wide font-medium">Total</div>
+					<div class="text-lg font-bold text-gray-900 mt-1">{ fmt.Sprint(data.Stats.TotalTasks) }</div>
+				</div>
+				<div class="flex-1 px-3 py-2 text-center bg-blue-50 min-w-[100px]">
+					<div class="text-xs text-blue-700 uppercase tracking-wide font-medium">Running</div>
+					<div class="text-lg font-bold text-blue-900 mt-1">{ fmt.Sprint(data.Stats.RunningTasks) }</div>
+				</div>
+				<div class="flex-1 px-3 py-2 text-center bg-green-50 min-w-[100px]">
+					<div class="text-xs text-green-700 uppercase tracking-wide font-medium">Success</div>
+					<div class="text-lg font-bold text-green-900 mt-1">{ fmt.Sprint(data.Stats.SuccessTasks) }</div>
+				</div>
+				<div class="flex-1 px-3 py-2 text-center bg-red-50 min-w-[100px]">
+					<div class="text-xs text-red-700 uppercase tracking-wide font-medium">Failed</div>
+					<div class="text-lg font-bold text-red-900 mt-1">{ fmt.Sprint(data.Stats.FailedTasks) }</div>
+				</div>
+				<div class="flex-1 px-3 py-2 text-center bg-gray-50 min-w-[100px]">
+					<div class="text-xs text-gray-600 uppercase tracking-wide font-medium">Idle</div>
+					<div class="text-lg font-bold text-gray-700 mt-1">{ fmt.Sprint(data.Stats.IdleTasks) }</div>
+				</div>
+				<div class="flex-1 px-3 py-2 text-center bg-purple-50 min-w-[100px]">
+					<div class="text-xs text-purple-700 uppercase tracking-wide font-medium">Executions</div>
+					<div class="text-lg font-bold text-purple-900 mt-1">{ fmt.Sprint(data.Stats.TotalExecutions) }</div>
+				</div>
 			</div>
 		</div>
 		<!-- Search and Filter Controls -->
@@ -119,7 +121,14 @@ templ dashboardContent(data DashboardPageData) {
 			</div>
 		}
 	</div>
-	<script>
+	@dashboardScript(data.BaseData.CSRFToken)
+}
+
+// dashboardScript generates the dashboard JavaScript with CSRF token
+script dashboardScript(csrfToken string) {
+	// CSRF token for form submissions
+	const CSRF_TOKEN = csrfToken;
+
 		// Auto-refresh interval (5 seconds)
 		let autoRefreshInterval = null;
 		let autoRefreshEnabled = true;
@@ -176,7 +185,7 @@ templ dashboardContent(data DashboardPageData) {
 		}
 
 		// Filter tasks based on search and filter criteria
-		function filterTasks() {
+		window.filterTasks = function() {
 			const searchInput = document.getElementById('searchInput').value.toLowerCase();
 			const statusFilter = document.getElementById('statusFilter').value;
 			const tagFilter = document.getElementById('tagFilter').value;
@@ -255,7 +264,7 @@ templ dashboardContent(data DashboardPageData) {
 		}
 
 		// Clear all filters
-		function clearFilters() {
+		window.clearFilters = function() {
 			document.getElementById('searchInput').value = '';
 			document.getElementById('statusFilter').value = 'all';
 			document.getElementById('tagFilter').value = 'all';
@@ -392,7 +401,7 @@ templ dashboardContent(data DashboardPageData) {
 			return icons[status] || icons['idle'];
 		}
 
-		function runTask(taskName) {
+		window.runTask = function(taskName) {
 			if (!confirm('Run task "' + taskName + '"?')) return;
 
 			const btn = event.target;
@@ -401,7 +410,10 @@ templ dashboardContent(data DashboardPageData) {
 
 			fetch('/tasks/' + taskName + '/execute', {
 				method: 'POST',
-				credentials: 'same-origin'
+				credentials: 'same-origin',
+				headers: {
+					'X-CSRF-Token': CSRF_TOKEN
+				}
 			})
 				.then(res => res.json())
 				.then(data => {
@@ -422,7 +434,6 @@ templ dashboardContent(data DashboardPageData) {
 					btn.textContent = 'Run';
 				});
 		}
-	</script>
 }
 
 // DashboardPageData contains data for the dashboard page

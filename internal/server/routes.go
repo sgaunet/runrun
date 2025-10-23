@@ -29,6 +29,9 @@ func (s *Server) SetupRoutes() {
 
 		// Static assets
 		r.Handle("/static/*", http.StripPrefix("/static/", s.serveStaticFiles()))
+
+		// WebSocket endpoint - handles auth internally (middleware redirect doesn't work for WS)
+		r.Get("/logs/ws/{executionID}", s.wsLogsHandler)
 	})
 
 	// Protected routes (authentication required)
@@ -53,14 +56,13 @@ func (s *Server) SetupRoutes() {
 		// API routes
 		r.Route("/api", func(r chi.Router) {
 			r.Get("/status", s.statusAPIHandler)
-			r.Get("/logs/{executionID}/poll", s.pollLogsHandler)
 		})
 
 		// Log routes
 		r.Route("/logs", func(r chi.Router) {
 			r.Get("/{executionID}", s.viewLogsHandlerTempl)
 			r.Get("/{executionID}/download", s.downloadLogsHandler)
-			r.Get("/ws/{executionID}", s.wsHandler.ServeWS)
+			r.Get("/{executionID}/poll", s.pollLogsHandler)
 		})
 	})
 }

@@ -62,6 +62,8 @@ templ TaskCard(task templates.TaskCard) {
 				Run
 			</button>
 		</div>
+		<!-- Error message container -->
+		<div id={ "error-" + task.Name } class="hidden mt-3 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700"></div>
 	</div>
 }
 

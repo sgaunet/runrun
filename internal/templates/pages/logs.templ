@@ -34,25 +34,29 @@ templ logsContent(data LogsPageData) {
 			</div>
 		</div>
 		<!-- Action Buttons -->
-		<div class="mb-4 flex gap-2">
-			<button onclick="copyLogs()" class="btn btn-secondary text-sm">
-				<svg class="w-4 h-4 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
-				</svg>
-				Copy Logs
-			</button>
-			<a href={ templ.URL("/logs/" + data.ExecutionID + "/download") } class="btn btn-secondary text-sm">
-				<svg class="w-4 h-4 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
-				</svg>
-				Download
-			</a>
-			<button onclick="toggleAutoScroll()" id="autoScrollBtn" class="btn btn-secondary text-sm">
-				<svg class="w-4 h-4 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 13l-7 7-7-7m14-8l-7 7-7-7"></path>
-				</svg>
-				Auto-scroll: ON
-			</button>
+		<div class="mb-4">
+			<div class="flex gap-2 mb-2">
+				<button onclick="copyLogs()" class="btn btn-secondary text-sm">
+					<svg class="w-4 h-4 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
+					</svg>
+					Copy Logs
+				</button>
+				<a href={ templ.URL("/logs/" + data.ExecutionID + "/download") } class="btn btn-secondary text-sm">
+					<svg class="w-4 h-4 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
+					</svg>
+					Download
+				</a>
+				<button onclick="toggleAutoScroll()" id="autoScrollBtn" class="btn btn-secondary text-sm">
+					<svg class="w-4 h-4 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 13l-7 7-7-7m14-8l-7 7-7-7"></path>
+					</svg>
+					Auto-scroll: ON
+				</button>
+			</div>
+			<!-- Clipboard feedback message -->
+			<div id="clipboard-message" class="hidden p-2 rounded text-sm"></div>
 		</div>
 		<div id="logViewerContainer"></div>
 	</div>
@@ -146,11 +150,31 @@ script logsScript(executionID string) {
 			}, 3000);
 		}
 
+		// Show clipboard feedback message
+		function showClipboardMessage(message, isSuccess) {
+			const messageDiv = document.getElementById('clipboard-message');
+			if (messageDiv) {
+				messageDiv.textContent = message;
+				messageDiv.classList.remove('hidden', 'bg-red-50', 'text-red-700', 'bg-blue-50', 'text-blue-700');
+
+				if (isSuccess) {
+					messageDiv.classList.add('bg-blue-50', 'text-blue-700');
+				} else {
+					messageDiv.classList.add('bg-red-50', 'text-red-700');
+				}
+
+				// Auto-hide after 3 seconds
+				setTimeout(() => {
+					messageDiv.classList.add('hidden');
+				}, 3000);
+			}
+		}
+
 		// Copy logs to clipboard
 		window.copyLogs = function() {
 			const logsText = logViewer.getAllLinesAsText();
 			if (!logsText) {
-				alert('No logs to copy');
+				showClipboardMessage('No logs to copy', false);
 				return;
 			}
 
@@ -165,7 +189,7 @@ script logsScript(executionID string) {
 				})
 				.catch(err => {
 					console.error('Failed to copy logs:', err);
-					alert('Failed to copy logs to clipboard');
+					showClipboardMessage('Failed to copy logs to clipboard', false);
 				});
 		}
 

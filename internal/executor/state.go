@@ -5,6 +5,61 @@ import (
 	"time"
 )
 
+// copyExecution creates a deep copy of an Execution to prevent race conditions
+func copyExecution(src *Execution) *Execution {
+	if src == nil {
+		return nil
+	}
+
+	dst := &Execution{
+		ID:          src.ID,
+		TaskName:    src.TaskName,
+		Task:        src.Task, // Pointer copy is safe as Task is immutable
+		Status:      src.Status,
+		StartedAt:   src.StartedAt,
+		Duration:    src.Duration,
+		Error:       src.Error,
+		LogFilePath: src.LogFilePath,
+	}
+
+	// Deep copy FinishedAt pointer
+	if src.FinishedAt != nil {
+		finishedAt := *src.FinishedAt
+		dst.FinishedAt = &finishedAt
+	}
+
+	// Deep copy Steps slice
+	if src.Steps != nil {
+		dst.Steps = make([]*StepExecution, len(src.Steps))
+		for i, step := range src.Steps {
+			if step != nil {
+				stepCopy := &StepExecution{
+					Name:      step.Name,
+					Command:   step.Command,
+					Status:    step.Status,
+					StartedAt: step.StartedAt,
+					Duration:  step.Duration,
+					ExitCode:  step.ExitCode,
+					Error:     step.Error,
+				}
+				// Deep copy FinishedAt pointer
+				if step.FinishedAt != nil {
+					finishedAt := *step.FinishedAt
+					stepCopy.FinishedAt = &finishedAt
+				}
+				// Deep copy Output slice
+				if step.Output != nil {
+					stepCopy.Output = make([]byte, len(step.Output))
+					copy(stepCopy.Output, step.Output)
+				}
+				dst.Steps[i] = stepCopy
+			}
+		}
+	}
+
+	return dst
+}
+
 // GetExecution retrieves an execution by ID
 func (e *TaskExecutor) GetExecution(executionID string) (*Execution, error) {
 	e.executionsMutex.RLock()
@@ -15,7 +70,7 @@ func (e *TaskExecutor) GetExecution(executionID string) (*Execution, error) {
 		return nil, fmt.Errorf("execution not found: %s", executionID)
 	}
 
-	return execution, nil
+	return copyExecution(execution), nil
 }
 
 // ListExecutions returns all executions for a task
@@ -26,7 +81,7 @@ func (e *TaskExecutor) ListExecutions(taskName string) ([]*Execution, error) {
 	var executions []*Execution
 	for _, exec := range e.executions {
 		if taskName == "" || exec.TaskName == taskName {
-			executions = append(executions, exec)
+			executions = append(executions, copyExecution(exec))
 		}
 	}
 
@@ -124,7 +179,7 @@ func (e *TaskExecutor) GetLatestExecution(taskName string) (*Execution, error) {
 		return nil, fmt.Errorf("no executions found for task: %s", taskName)
 	}
 
-	return latest, nil
+	return copyExecution(latest), nil
 }
 
 // TaskStats represents aggregated statistics for all tasks

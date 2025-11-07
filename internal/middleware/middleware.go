@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"runtime/debug"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -131,6 +132,52 @@ func (rw *responseWriter) Flush() {
 	}
 }
 
+// timeoutWriter wraps http.ResponseWriter to prevent concurrent writes
+type timeoutWriter struct {
+	w           http.ResponseWriter
+	mu          sync.Mutex
+	written     bool
+	timedOut    bool
+}
+
+func (tw *timeoutWriter) Header() http.Header {
+	return tw.w.Header()
+}
+
+func (tw *timeoutWriter) Write(b []byte) (int, error) {
+	tw.mu.Lock()
+	defer tw.mu.Unlock()
+	if tw.timedOut {
+		return 0, http.ErrHandlerTimeout
+	}
+	if !tw.written {
+		tw.written = true
+	}
+	return tw.w.Write(b)
+}
+
+func (tw *timeoutWriter) WriteHeader(code int) {
+	tw.mu.Lock()
+	defer tw.mu.Unlock()
+	if tw.timedOut {
+		return
+	}
+	if !tw.written {
+		tw.written = true
+		tw.w.WriteHeader(code)
+	}
+}
+
+func (tw *timeoutWriter) timeout() bool {
+	tw.mu.Lock()
+	defer tw.mu.Unlock()
+	if tw.written {
+		return false
+	}
+	tw.timedOut = true
+	return true
+}
+
 // TimeoutMiddleware adds a timeout to requests
 func TimeoutMiddleware(timeout time.Duration) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
@@ -138,10 +185,11 @@ func TimeoutMiddleware(timeout time.Duration) func(http.Handler) http.Handler {
 			ctx, cancel := context.WithTimeout(r.Context(), timeout)
 			defer cancel()
 
+			tw := &timeoutWriter{w: w}
 			done := make(chan struct{})
 
 			go func() {
-				next.ServeHTTP(w, r.WithContext(ctx))
+				next.ServeHTTP(tw, r.WithContext(ctx))
 				close(done)
 			}()
 
@@ -150,9 +198,11 @@ func TimeoutMiddleware(timeout time.Duration) func(http.Handler) http.Handler {
 				// Request completed successfully
 				return
 			case <-ctx.Done():
-				// Request timed out
-				err := apperrors.ServiceUnavailable("Request timeout", ctx.Err())
-				apperrors.HandleError(w, r, err)
+				// Request timed out - only write timeout response if handler hasn't written yet
+				if tw.timeout() {
+					err := apperrors.ServiceUnavailable("Request timeout", ctx.Err())
+					apperrors.HandleError(w, r, err)
+				}
 				return
 			}
 		})

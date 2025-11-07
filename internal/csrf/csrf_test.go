@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -294,6 +295,7 @@ func TestConcurrentTokenOperations(t *testing.T) {
 	// Test concurrent token generation
 	sessions := []string{"session1", "session2", "session3", "session4", "session5"}
 	tokens := make(map[string]string)
+	var tokensMutex sync.Mutex
 
 	// Generate tokens concurrently
 	done := make(chan bool, len(sessions))
@@ -301,7 +303,9 @@ func TestConcurrentTokenOperations(t *testing.T) {
 		go func(sid string) {
 			token, err := protection.GenerateToken(sid)
 			require.NoError(t, err)
+			tokensMutex.Lock()
 			tokens[sid] = token
+			tokensMutex.Unlock()
 			done <- true
 		}(sessionID)
 	}

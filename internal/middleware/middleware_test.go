@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -434,13 +435,13 @@ func TestLoggingMiddleware_DifferentMethods(t *testing.T) {
 func TestTimeoutMiddleware_ContextCancellation(t *testing.T) {
 	middleware := TimeoutMiddleware(100 * time.Millisecond)
 
-	contextCancelled := false
+	var contextCancelled atomic.Bool
 	handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-time.After(200 * time.Millisecond):
 			w.WriteHeader(http.StatusOK)
 		case <-r.Context().Done():
-			contextCancelled = true
+			contextCancelled.Store(true)
 			return
 		}
 	}))
@@ -453,7 +454,7 @@ func TestTimeoutMiddleware_ContextCancellation(t *testing.T) {
 	// Give time for context cancellation to propagate
 	time.Sleep(50 * time.Millisecond)
 
-	assert.True(t, contextCancelled, "Context should be cancelled on timeout")
+	assert.True(t, contextCancelled.Load(), "Context should be cancelled on timeout")
 }
 
 func TestSecurityHeadersMiddleware_MultipleRequests(t *testing.T) {

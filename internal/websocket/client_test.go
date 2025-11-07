@@ -410,3 +410,133 @@ func TestClient_MultipleSubscribeOperations(t *testing.T) {
 	assert.Len(t, client.Subscriptions, 3)
 	client.SubscribeMu.RUnlock()
 }
+
+func TestClient_SendMessage_Success(t *testing.T) {
+	hub := NewHub()
+	config := DefaultConfig()
+
+	client := NewClient(hub, nil, "test-send-msg", config)
+
+	msg := Message{
+		Type:      MessageTypeSubscribed,
+		ExecutionID: "test-exec",
+		Timestamp: time.Now(),
+	}
+
+	// Should not block or panic
+	client.sendMessage(msg)
+
+	// Message should be in send channel
+	select {
+	case receivedMsg := <-client.Send:
+		var decoded Message
+		err := json.Unmarshal(receivedMsg, &decoded)
+		require.NoError(t, err)
+		assert.Equal(t, MessageTypeSubscribed, decoded.Type)
+		assert.Equal(t, "test-exec", decoded.ExecutionID)
+	case <-time.After(1 * time.Second):
+		t.Fatal("Message not sent to channel")
+	}
+}
+
+func TestHub_BroadcastMessage_NoSubscribers(t *testing.T) {
+	hub := NewHub()
+
+	// Start hub
+	go hub.Run()
+	time.Sleep(50 * time.Millisecond)
+
+	// Broadcast to execution with no subscribers
+	hub.Broadcast <- &BroadcastMessage{
+		ExecutionID: "no-subscribers",
+		Data:        []byte("test"),
+	}
+
+	// Give time to process
+	time.Sleep(100 * time.Millisecond)
+
+	// Test passes if no panic or error
+}
+
+func TestClient_GetLastActivity(t *testing.T) {
+	hub := NewHub()
+	config := DefaultConfig()
+
+	client := NewClient(hub, nil, "test-activity-get", config)
+
+	lastActivity := client.GetLastActivity()
+	assert.False(t, lastActivity.IsZero())
+}
+
+func TestMessage_WithEmptyData(t *testing.T) {
+	msg := Message{
+		Type:        MessageTypePing,
+		ExecutionID: "",
+		Data:        nil,
+		Timestamp:   time.Now(),
+	}
+
+	data, err := json.Marshal(msg)
+	require.NoError(t, err)
+
+	var decoded Message
+	err = json.Unmarshal(data, &decoded)
+	require.NoError(t, err)
+
+	assert.Equal(t, MessageTypePing, decoded.Type)
+	assert.Nil(t, decoded.Data)
+}
+
+func TestClient_MultipleMessages(t *testing.T) {
+	hub := NewHub()
+	config := DefaultConfig()
+
+	client := NewClient(hub, nil, "test-multi-msg", config)
+
+	// Send multiple messages
+	for i := 0; i < 5; i++ {
+		msg := Message{
+			Type:        MessageTypeLog,
+			ExecutionID: "test",
+			Data: LogData{
+				Line:      "test",
+				Timestamp: time.Now(),
+			},
+			Timestamp: time.Now(),
+		}
+		client.sendMessage(msg)
+	}
+
+	// Should have 5 messages
+	assert.Len(t, client.Send, 5)
+}
+
+func TestHub_GetSubscriberCount_Multiple(t *testing.T) {
+	hub := NewHub()
+
+	clients := make([]*Client, 5)
+	for i := 0; i < 5; i++ {
+		clients[i] = &Client{
+			ID:            "client-" + string(rune('0'+i)),
+			Hub:           hub,
+			Send:          make(chan []byte, 10),
+			Subscriptions: make(map[string]bool),
+		}
+	}
+
+	executionID := "exec-multi-count"
+
+	// Subscribe all clients
+	for _, client := range clients {
+		hub.Subscribe(client, executionID)
+	}
+
+	count := hub.GetSubscriberCount(executionID)
+	assert.Equal(t, 5, count)
+
+	// Unsubscribe one
+	hub.Unsubscribe(clients[0], executionID)
+
+	count = hub.GetSubscriberCount(executionID)
+	assert.Equal(t, 4, count)
+}

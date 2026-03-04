@@ -10,7 +10,7 @@ import (
 )
 
 func TestNewBroadcaster(t *testing.T) {
-	hub := NewHub()
+	hub := NewHub(nil)
 	broadcaster := NewBroadcaster(hub)
 
 	require.NotNil(t, broadcaster)
@@ -18,7 +18,7 @@ func TestNewBroadcaster(t *testing.T) {
 }
 
 func TestBroadcastLog(t *testing.T) {
-	hub := NewHub()
+	hub := NewHub(nil)
 	broadcaster := NewBroadcaster(hub)
 
 	// Start hub
@@ -65,7 +65,7 @@ func TestBroadcastLog(t *testing.T) {
 }
 
 func TestBroadcastLogWithLevel(t *testing.T) {
-	hub := NewHub()
+	hub := NewHub(nil)
 	broadcaster := NewBroadcaster(hub)
 
 	// Start hub
@@ -114,7 +114,7 @@ func TestBroadcastLogWithLevel(t *testing.T) {
 }
 
 func TestBroadcastLog_NoSubscribers(t *testing.T) {
-	hub := NewHub()
+	hub := NewHub(nil)
 	broadcaster := NewBroadcaster(hub)
 
 	// Start hub
@@ -129,7 +129,7 @@ func TestBroadcastLog_NoSubscribers(t *testing.T) {
 }
 
 func TestHasSubscribers_True(t *testing.T) {
-	hub := NewHub()
+	hub := NewHub(nil)
 	broadcaster := NewBroadcaster(hub)
 
 	client := &Client{
@@ -147,7 +147,7 @@ func TestHasSubscribers_True(t *testing.T) {
 }
 
 func TestHasSubscribers_False(t *testing.T) {
-	hub := NewHub()
+	hub := NewHub(nil)
 	broadcaster := NewBroadcaster(hub)
 
 	hasSubscribers := broadcaster.HasSubscribers("nonexistent")
@@ -155,7 +155,7 @@ func TestHasSubscribers_False(t *testing.T) {
 }
 
 func TestBroadcastLogWithLevel_DifferentLevels(t *testing.T) {
-	hub := NewHub()
+	hub := NewHub(nil)
 	broadcaster := NewBroadcaster(hub)
 
 	// Start hub
@@ -188,7 +188,7 @@ func TestBroadcastLogWithLevel_DifferentLevels(t *testing.T) {
 }
 
 func TestBroadcastLog_MultipleClients(t *testing.T) {
-	hub := NewHub()
+	hub := NewHub(nil)
 	broadcaster := NewBroadcaster(hub)
 
 	// Start hub

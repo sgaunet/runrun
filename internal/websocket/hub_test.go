@@ -11,7 +11,7 @@ import (
 )
 
 func TestNewHub(t *testing.T) {
-	hub := NewHub()
+	hub := NewHub(nil)
 	require.NotNil(t, hub)
 
 	assert.NotNil(t, hub.Clients)
@@ -23,7 +23,7 @@ func TestNewHub(t *testing.T) {
 }
 
 func TestHub_RegisterClient(t *testing.T) {
-	hub := NewHub()
+	hub := NewHub(nil)
 
 	// Start hub in goroutine
 	go hub.Run()
@@ -50,7 +50,7 @@ func TestHub_RegisterClient(t *testing.T) {
 }
 
 func TestHub_UnregisterClient(t *testing.T) {
-	hub := NewHub()
+	hub := NewHub(nil)
 
 	// Start hub
 	go hub.Run()
@@ -77,7 +77,7 @@ func TestHub_UnregisterClient(t *testing.T) {
 }
 
 func TestHub_Subscribe(t *testing.T) {
-	hub := NewHub()
+	hub := NewHub(nil)
 
 	client := &Client{
 		ID:            "test-client-3",
@@ -104,7 +104,7 @@ func TestHub_Subscribe(t *testing.T) {
 }
 
 func TestHub_Unsubscribe(t *testing.T) {
-	hub := NewHub()
+	hub := NewHub(nil)
 
 	client := &Client{
 		ID:            "test-client-4",
@@ -133,7 +133,7 @@ func TestHub_Unsubscribe(t *testing.T) {
 }
 
 func TestHub_BroadcastMessage(t *testing.T) {
-	hub := NewHub()
+	hub := NewHub(nil)
 
 	// Start hub
 	go hub.Run()
@@ -185,7 +185,7 @@ func TestHub_BroadcastMessage(t *testing.T) {
 }
 
 func TestHub_BroadcastToNonExistentExecution(t *testing.T) {
-	hub := NewHub()
+	hub := NewHub(nil)
 
 	// Start hub
 	go hub.Run()
@@ -202,7 +202,7 @@ func TestHub_BroadcastToNonExistentExecution(t *testing.T) {
 }
 
 func TestHub_GetSubscriberCount(t *testing.T) {
-	hub := NewHub()
+	hub := NewHub(nil)
 
 	client1 := &Client{
 		ID:            "test-client-7",
@@ -241,7 +241,7 @@ func TestHub_GetSubscriberCount(t *testing.T) {
 }
 
 func TestHub_MultipleSubscriptions(t *testing.T) {
-	hub := NewHub()
+	hub := NewHub(nil)
 
 	client := &Client{
 		ID:            "test-client-9",
@@ -271,7 +271,7 @@ func TestHub_MultipleSubscriptions(t *testing.T) {
 }
 
 func TestHub_UnregisterCleansUpSubscriptions(t *testing.T) {
-	hub := NewHub()
+	hub := NewHub(nil)
 
 	// Start hub
 	go hub.Run()
@@ -307,7 +307,7 @@ func TestHub_UnregisterCleansUpSubscriptions(t *testing.T) {
 }
 
 func TestHub_ConcurrentOperations(t *testing.T) {
-	hub := NewHub()
+	hub := NewHub(nil)
 
 	// Start hub in goroutine
 	done := make(chan bool)
@@ -398,7 +398,7 @@ func TestDefaultConfig(t *testing.T) {
 }
 
 func TestNewClient(t *testing.T) {
-	hub := NewHub()
+	hub := NewHub(nil)
 	config := DefaultConfig()
 
 	// Create a nil websocket connection for testing (won't actually use it)
@@ -416,7 +416,7 @@ func TestNewClient(t *testing.T) {
 }
 
 func TestClient_UpdateActivity(t *testing.T) {
-	hub := NewHub()
+	hub := NewHub(nil)
 	config := DefaultConfig()
 
 	client := NewClient(hub, nil, "test-activity", config)
@@ -431,7 +431,7 @@ func TestClient_UpdateActivity(t *testing.T) {
 }
 
 func TestHub_Shutdown(t *testing.T) {
-	hub := NewHub()
+	hub := NewHub(nil)
 
 	// Don't run hub to avoid goroutine issues in test
 	// Just test that Shutdown doesn't panic
@@ -480,7 +480,7 @@ func TestHub_Shutdown(t *testing.T) {
 }
 
 func TestNewHandler(t *testing.T) {
-	hub := NewHub()
+	hub := NewHub(nil)
 	config := DefaultConfig()
 
 	handler := NewHandler(hub, config)
@@ -493,7 +493,7 @@ func TestNewHandler(t *testing.T) {
 // Benchmark tests for WebSocket critical paths
 
 func BenchmarkHub_Subscribe(b *testing.B) {
-	hub := NewHub()
+	hub := NewHub(nil)
 	client := &Client{
 		ID:            "bench-client",
 		Hub:           hub,
@@ -509,7 +509,7 @@ func BenchmarkHub_Subscribe(b *testing.B) {
 }
 
 func BenchmarkHub_Unsubscribe(b *testing.B) {
-	hub := NewHub()
+	hub := NewHub(nil)
 	client := &Client{
 		ID:            "bench-client",
 		Hub:           hub,
@@ -531,7 +531,7 @@ func BenchmarkHub_Unsubscribe(b *testing.B) {
 }
 
 func BenchmarkHub_GetSubscriberCount(b *testing.B) {
-	hub := NewHub()
+	hub := NewHub(nil)
 	client := &Client{
 		ID:            "bench-client",
 		Hub:           hub,
@@ -549,7 +549,7 @@ func BenchmarkHub_GetSubscriberCount(b *testing.B) {
 }
 
 func BenchmarkHub_BroadcastSingleClient(b *testing.B) {
-	hub := NewHub()
+	hub := NewHub(nil)
 	go hub.Run()
 
 	client := &Client{
@@ -574,7 +574,7 @@ func BenchmarkHub_BroadcastSingleClient(b *testing.B) {
 }
 
 func BenchmarkHub_BroadcastMultipleClients(b *testing.B) {
-	hub := NewHub()
+	hub := NewHub(nil)
 	go hub.Run()
 
 	numClients := 10
@@ -603,7 +603,7 @@ func BenchmarkHub_BroadcastMultipleClients(b *testing.B) {
 }
 
 func BenchmarkHub_ConcurrentSubscribe(b *testing.B) {
-	hub := NewHub()
+	hub := NewHub(nil)
 	client := &Client{
 		ID:            "bench-client",
 		Hub:           hub,
@@ -620,4 +620,244 @@ func BenchmarkHub_ConcurrentSubscribe(b *testing.B) {
 			i++
 		}
 	})
+}
+
+// === New tests for enhanced WebSocket error handling ===
+
+func TestHub_ConnectionLimitReached(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.MaxConnectionsPerExecution = 2
+	hub := NewHub(cfg)
+
+	executionID := "exec-limit"
+
+	// First two subscriptions should be under limit
+	client1 := &Client{
+		ID:            "limit-client-1",
+		Hub:           hub,
+		Send:          make(chan []byte, 10),
+		Subscriptions: make(map[string]bool),
+	}
+	client2 := &Client{
+		ID:            "limit-client-2",
+		Hub:           hub,
+		Send:          make(chan []byte, 10),
+		Subscriptions: make(map[string]bool),
+	}
+
+	assert.False(t, hub.ConnectionLimitReached(executionID))
+
+	hub.Subscribe(client1, executionID)
+	assert.False(t, hub.ConnectionLimitReached(executionID))
+
+	hub.Subscribe(client2, executionID)
+	assert.True(t, hub.ConnectionLimitReached(executionID))
+}
+
+func TestHub_ConnectionLimitReleasedOnUnsubscribe(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.MaxConnectionsPerExecution = 1
+	hub := NewHub(cfg)
+
+	executionID := "exec-limit-release"
+
+	client := &Client{
+		ID:            "limit-release-client",
+		Hub:           hub,
+		Send:          make(chan []byte, 10),
+		Subscriptions: make(map[string]bool),
+	}
+
+	hub.Subscribe(client, executionID)
+	assert.True(t, hub.ConnectionLimitReached(executionID))
+
+	hub.Unsubscribe(client, executionID)
+	assert.False(t, hub.ConnectionLimitReached(executionID))
+}
+
+func TestHub_ConnectionLimitReleasedOnUnregister(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.MaxConnectionsPerExecution = 1
+	hub := NewHub(cfg)
+
+	go hub.Run()
+
+	executionID := "exec-limit-unreg"
+
+	client := &Client{
+		ID:            "limit-unreg-client",
+		Hub:           hub,
+		Send:          make(chan []byte, 10),
+		Subscriptions: make(map[string]bool),
+	}
+
+	hub.Register <- client
+	time.Sleep(50 * time.Millisecond)
+
+	hub.Subscribe(client, executionID)
+	assert.True(t, hub.ConnectionLimitReached(executionID))
+
+	hub.Unregister <- client
+	time.Sleep(100 * time.Millisecond)
+
+	assert.False(t, hub.ConnectionLimitReached(executionID))
+}
+
+func TestHub_ConnectionLimitDisabledWhenZero(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.MaxConnectionsPerExecution = 0
+	hub := NewHub(cfg)
+
+	executionID := "exec-no-limit"
+
+	// Subscribe many clients, limit should never be reached
+	for i := range 20 {
+		client := &Client{
+			ID:            "no-limit-client-" + string(rune('A'+i)),
+			Hub:           hub,
+			Send:          make(chan []byte, 10),
+			Subscriptions: make(map[string]bool),
+		}
+		hub.Subscribe(client, executionID)
+		assert.False(t, hub.ConnectionLimitReached(executionID))
+	}
+}
+
+func TestHub_GetConnectionCount(t *testing.T) {
+	hub := NewHub(nil)
+
+	executionID := "exec-conn-count"
+
+	assert.Equal(t, 0, hub.GetConnectionCount(executionID))
+
+	client1 := &Client{
+		ID:            "conn-count-1",
+		Hub:           hub,
+		Send:          make(chan []byte, 10),
+		Subscriptions: make(map[string]bool),
+	}
+	client2 := &Client{
+		ID:            "conn-count-2",
+		Hub:           hub,
+		Send:          make(chan []byte, 10),
+		Subscriptions: make(map[string]bool),
+	}
+
+	hub.Subscribe(client1, executionID)
+	assert.Equal(t, 1, hub.GetConnectionCount(executionID))
+
+	hub.Subscribe(client2, executionID)
+	assert.Equal(t, 2, hub.GetConnectionCount(executionID))
+
+	hub.Unsubscribe(client1, executionID)
+	assert.Equal(t, 1, hub.GetConnectionCount(executionID))
+
+	hub.Unsubscribe(client2, executionID)
+	assert.Equal(t, 0, hub.GetConnectionCount(executionID))
+}
+
+func TestHub_EvictIdleClients(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.IdleTimeout = 50 * time.Millisecond
+	hub := NewHub(cfg)
+
+	go hub.Run()
+
+	client := &Client{
+		ID:            "idle-client",
+		Hub:           hub,
+		Send:          make(chan []byte, 10),
+		Subscriptions: make(map[string]bool),
+		LastActivity:  time.Now(),
+	}
+
+	hub.Register <- client
+	time.Sleep(50 * time.Millisecond)
+
+	// Verify registered
+	hub.ClientsMu.RLock()
+	_, exists := hub.Clients[client]
+	hub.ClientsMu.RUnlock()
+	assert.True(t, exists)
+
+	// Make client idle by setting LastActivity in the past
+	client.ActivityMu.Lock()
+	client.LastActivity = time.Now().Add(-2 * cfg.IdleTimeout)
+	client.ActivityMu.Unlock()
+
+	// Wait for idle sweep (runs at IdleTimeout/2 = 25ms) plus processing time
+	time.Sleep(300 * time.Millisecond)
+
+	// Client should be evicted
+	hub.ClientsMu.RLock()
+	_, exists = hub.Clients[client]
+	hub.ClientsMu.RUnlock()
+	assert.False(t, exists, "idle client should have been evicted")
+}
+
+func TestHub_ActiveClientNotEvicted(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.IdleTimeout = 100 * time.Millisecond
+	hub := NewHub(cfg)
+
+	go hub.Run()
+
+	client := &Client{
+		ID:            "active-client",
+		Hub:           hub,
+		Send:          make(chan []byte, 10),
+		Subscriptions: make(map[string]bool),
+		LastActivity:  time.Now(),
+	}
+
+	hub.Register <- client
+	time.Sleep(50 * time.Millisecond)
+
+	// Keep updating activity
+	client.UpdateActivity()
+
+	// Wait for a sweep cycle
+	time.Sleep(80 * time.Millisecond)
+
+	// Client should still be registered
+	hub.ClientsMu.RLock()
+	_, exists := hub.Clients[client]
+	hub.ClientsMu.RUnlock()
+	assert.True(t, exists, "active client should not be evicted")
+
+	// Clean up
+	hub.Unregister <- client
+	time.Sleep(50 * time.Millisecond)
+}
+
+func TestHub_StopExitsRunLoop(t *testing.T) {
+	hub := NewHub(nil)
+
+	done := make(chan struct{})
+	go func() {
+		hub.Run()
+		close(done)
+	}()
+
+	hub.Stop()
+
+	select {
+	case <-done:
+		// Run loop exited
+	case <-time.After(1 * time.Second):
+		t.Fatal("Hub.Run() did not exit after Stop()")
+	}
+}
+
+func TestHub_NewHubWithNilConfigUsesDefaults(t *testing.T) {
+	hub := NewHub(nil)
+	assert.NotNil(t, hub.config)
+	assert.Equal(t, DefaultConfig().IdleTimeout, hub.config.IdleTimeout)
+	assert.Equal(t, DefaultConfig().MaxConnectionsPerExecution, hub.config.MaxConnectionsPerExecution)
+}
+
+func TestDefaultConfig_NewFields(t *testing.T) {
+	cfg := DefaultConfig()
+	assert.Equal(t, 5*time.Minute, cfg.IdleTimeout)
+	assert.Equal(t, 10, cfg.MaxConnectionsPerExecution)
 }

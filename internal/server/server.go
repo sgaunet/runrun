@@ -54,8 +54,9 @@ func New(cfg *config.Config) *Server {
 	)
 
 	// Initialize WebSocket hub
-	s.wsHub = websocket.NewHub()
-	s.wsHandler = websocket.NewHandler(s.wsHub, websocket.DefaultConfig())
+	wsConfig := websocket.DefaultConfig()
+	s.wsHub = websocket.NewHub(wsConfig)
+	s.wsHandler = websocket.NewHandler(s.wsHub, wsConfig)
 	s.wsBroadcaster = websocket.NewBroadcaster(s.wsHub)
 
 	// Initialize rate limiter (5 login attempts per 15 minutes)

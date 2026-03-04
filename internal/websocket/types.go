@@ -86,6 +86,16 @@ type Hub struct {
 
 	// Broadcast is the channel for broadcasting messages to clients
 	Broadcast chan *BroadcastMessage
+
+	// stop signals the Run loop to exit
+	stop chan struct{}
+
+	// config holds WebSocket configuration
+	config *Config
+
+	// executionConnCounts tracks connection count per execution ID
+	executionConnCounts map[string]int
+	connCountsMu        sync.RWMutex
 }
 
 // BroadcastMessage represents a message to be broadcast to specific clients
@@ -122,19 +132,27 @@ type Config struct {
 
 	// MaxSubscriptionsPerClient is the maximum number of subscriptions per client
 	MaxSubscriptionsPerClient int
+
+	// IdleTimeout is the duration after which idle connections are closed
+	IdleTimeout time.Duration
+
+	// MaxConnectionsPerExecution limits concurrent connections per execution ID
+	MaxConnectionsPerExecution int
 }
 
 // DefaultConfig returns the default WebSocket configuration
 func DefaultConfig() *Config {
 	return &Config{
-		ReadBufferSize:            1024,
-		WriteBufferSize:           1024,
-		ReadTimeout:               60 * time.Second,
-		WriteTimeout:              10 * time.Second,
-		PingInterval:              30 * time.Second,
-		PongTimeout:               60 * time.Second,
-		MaxMessageSize:            512 * 1024, // 512 KB
-		SendChannelSize:           256,
-		MaxSubscriptionsPerClient: 10,
+		ReadBufferSize:             1024,
+		WriteBufferSize:            1024,
+		ReadTimeout:                60 * time.Second,
+		WriteTimeout:               10 * time.Second,
+		PingInterval:               30 * time.Second,
+		PongTimeout:                60 * time.Second,
+		MaxMessageSize:             512 * 1024, // 512 KB
+		SendChannelSize:            256,
+		MaxSubscriptionsPerClient:  10,
+		IdleTimeout:                5 * time.Minute,
+		MaxConnectionsPerExecution: 10,
 	}
 }

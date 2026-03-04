@@ -38,6 +38,12 @@ func (h *Handler) ServeWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check connection limit before upgrading
+	if h.Hub.ConnectionLimitReached(executionID) {
+		http.Error(w, "Too many connections for this execution", http.StatusTooManyRequests)
+		return
+	}
+
 	// Upgrade HTTP connection to WebSocket
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {

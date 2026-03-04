@@ -23,6 +23,9 @@ func NewClient(hub *Hub, conn *websocket.Conn, id string, config *Config) *Clien
 // ReadPump pumps messages from the WebSocket connection to the hub
 func (c *Client) ReadPump(config *Config) {
 	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("Panic recovered in ReadPump for client %s: %v", c.ID, r)
+		}
 		c.Hub.Unregister <- c
 		c.Conn.Close()
 	}()
@@ -53,6 +56,9 @@ func (c *Client) ReadPump(config *Config) {
 func (c *Client) WritePump(config *Config) {
 	ticker := time.NewTicker(config.PingInterval)
 	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("Panic recovered in WritePump for client %s: %v", c.ID, r)
+		}
 		ticker.Stop()
 		c.Conn.Close()
 	}()
@@ -94,6 +100,10 @@ func (c *Client) handleMessage(data []byte) {
 	case MessageTypeSubscribe:
 		if msg.ExecutionID == "" {
 			c.sendError("Execution ID is required for subscribe")
+			return
+		}
+		if c.Hub.ConnectionLimitReached(msg.ExecutionID) {
+			c.sendError("Too many connections for this execution")
 			return
 		}
 		c.Hub.Subscribe(c, msg.ExecutionID)

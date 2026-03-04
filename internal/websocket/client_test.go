@@ -10,7 +10,7 @@ import (
 )
 
 func TestClient_HandleMessage_Subscribe(t *testing.T) {
-	hub := NewHub()
+	hub := NewHub(nil)
 	config := DefaultConfig()
 
 	client := NewClient(hub, nil, "test-subscribe", config)
@@ -47,7 +47,7 @@ func TestClient_HandleMessage_Subscribe(t *testing.T) {
 }
 
 func TestClient_HandleMessage_SubscribeWithoutExecutionID(t *testing.T) {
-	hub := NewHub()
+	hub := NewHub(nil)
 	config := DefaultConfig()
 
 	client := NewClient(hub, nil, "test-subscribe-no-id", config)
@@ -76,7 +76,7 @@ func TestClient_HandleMessage_SubscribeWithoutExecutionID(t *testing.T) {
 }
 
 func TestClient_HandleMessage_Unsubscribe(t *testing.T) {
-	hub := NewHub()
+	hub := NewHub(nil)
 	config := DefaultConfig()
 
 	client := NewClient(hub, nil, "test-unsubscribe", config)
@@ -117,7 +117,7 @@ func TestClient_HandleMessage_Unsubscribe(t *testing.T) {
 }
 
 func TestClient_HandleMessage_UnsubscribeWithoutExecutionID(t *testing.T) {
-	hub := NewHub()
+	hub := NewHub(nil)
 	config := DefaultConfig()
 
 	client := NewClient(hub, nil, "test-unsub-no-id", config)
@@ -146,7 +146,7 @@ func TestClient_HandleMessage_UnsubscribeWithoutExecutionID(t *testing.T) {
 }
 
 func TestClient_HandleMessage_Pong(t *testing.T) {
-	hub := NewHub()
+	hub := NewHub(nil)
 	config := DefaultConfig()
 
 	client := NewClient(hub, nil, "test-pong", config)
@@ -170,7 +170,7 @@ func TestClient_HandleMessage_Pong(t *testing.T) {
 }
 
 func TestClient_HandleMessage_UnknownType(t *testing.T) {
-	hub := NewHub()
+	hub := NewHub(nil)
 	config := DefaultConfig()
 
 	client := NewClient(hub, nil, "test-unknown", config)
@@ -198,7 +198,7 @@ func TestClient_HandleMessage_UnknownType(t *testing.T) {
 }
 
 func TestClient_HandleMessage_InvalidJSON(t *testing.T) {
-	hub := NewHub()
+	hub := NewHub(nil)
 	config := DefaultConfig()
 
 	client := NewClient(hub, nil, "test-invalid-json", config)
@@ -222,7 +222,7 @@ func TestClient_HandleMessage_InvalidJSON(t *testing.T) {
 }
 
 func TestClient_SendError(t *testing.T) {
-	hub := NewHub()
+	hub := NewHub(nil)
 	config := DefaultConfig()
 
 	client := NewClient(hub, nil, "test-send-error", config)
@@ -245,7 +245,7 @@ func TestClient_SendError(t *testing.T) {
 }
 
 func TestClient_SendSubscribed(t *testing.T) {
-	hub := NewHub()
+	hub := NewHub(nil)
 	config := DefaultConfig()
 
 	client := NewClient(hub, nil, "test-send-subscribed", config)
@@ -268,7 +268,7 @@ func TestClient_SendSubscribed(t *testing.T) {
 }
 
 func TestClient_SendUnsubscribed(t *testing.T) {
-	hub := NewHub()
+	hub := NewHub(nil)
 	config := DefaultConfig()
 
 	client := NewClient(hub, nil, "test-send-unsubscribed", config)
@@ -291,7 +291,7 @@ func TestClient_SendUnsubscribed(t *testing.T) {
 }
 
 func TestClient_SendMessage_FullBuffer(t *testing.T) {
-	hub := NewHub()
+	hub := NewHub(nil)
 
 	// Create client with very small buffer
 	client := &Client{
@@ -376,7 +376,7 @@ func TestBroadcastMessage_Creation(t *testing.T) {
 }
 
 func TestClient_MultipleSubscribeOperations(t *testing.T) {
-	hub := NewHub()
+	hub := NewHub(nil)
 	config := DefaultConfig()
 
 	client := NewClient(hub, nil, "test-multi-sub", config)
@@ -412,7 +412,7 @@ func TestClient_MultipleSubscribeOperations(t *testing.T) {
 }
 
 func TestClient_SendMessage_Success(t *testing.T) {
-	hub := NewHub()
+	hub := NewHub(nil)
 	config := DefaultConfig()
 
 	client := NewClient(hub, nil, "test-send-msg", config)
@@ -440,7 +440,7 @@ func TestClient_SendMessage_Success(t *testing.T) {
 }
 
 func TestHub_BroadcastMessage_NoSubscribers(t *testing.T) {
-	hub := NewHub()
+	hub := NewHub(nil)
 
 	// Start hub
 	go hub.Run()
@@ -459,7 +459,7 @@ func TestHub_BroadcastMessage_NoSubscribers(t *testing.T) {
 }
 
 func TestClient_GetLastActivity(t *testing.T) {
-	hub := NewHub()
+	hub := NewHub(nil)
 	config := DefaultConfig()
 
 	client := NewClient(hub, nil, "test-activity-get", config)
@@ -488,7 +488,7 @@ func TestMessage_WithEmptyData(t *testing.T) {
 }
 
 func TestClient_MultipleMessages(t *testing.T) {
-	hub := NewHub()
+	hub := NewHub(nil)
 	config := DefaultConfig()
 
 	client := NewClient(hub, nil, "test-multi-msg", config)
@@ -512,7 +512,7 @@ func TestClient_MultipleMessages(t *testing.T) {
 }
 
 func TestHub_GetSubscriberCount_Multiple(t *testing.T) {
-	hub := NewHub()
+	hub := NewHub(nil)
 
 	clients := make([]*Client, 5)
 	for i := 0; i < 5; i++ {

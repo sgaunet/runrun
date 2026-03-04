@@ -1,0 +1,17 @@
+package components
+
+templ Header(username string) {
+	<nav class="nav">
+		<div class="nav-container">
+			<a href="/" class="nav-brand">
+				RunRun
+			</a>
+			<div class="nav-links">
+				<span class="text-sm text-gray-600 hidden sm:inline">{ username }</span>
+				<form action="/logout" method="POST" class="inline">
+					<button type="submit" class="btn btn-secondary">Logout</button>
+				</form>
+			</div>
+		</div>
+	</nav>
+}

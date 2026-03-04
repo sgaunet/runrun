@@ -1,0 +1,461 @@
+package pages
+
+import (
+	"fmt"
+	"github.com/sgaunet/runrun/internal/templates/layouts"
+	"github.com/sgaunet/runrun/internal/templates/components"
+	"github.com/sgaunet/runrun/internal/templates"
+)
+
+templ Dashboard(data DashboardPageData) {
+	@layouts.Base(data.BaseData, dashboardContent(data))
+}
+
+templ dashboardContent(data DashboardPageData) {
+	<div class="py-6">
+		<div class="mb-8">
+			<h2 class="text-3xl font-bold text-gray-900">Tasks Dashboard</h2>
+			<p class="mt-2 text-gray-600">Manage and execute your configured tasks</p>
+		</div>
+		<!-- Statistics Cards - Single Row Compact View -->
+		<div class="bg-white rounded-lg shadow mb-6 overflow-x-auto">
+			<div class="flex flex-nowrap divide-x divide-gray-200">
+				<div class="flex-1 px-3 py-2 text-center min-w-[100px]">
+					<div class="text-xs text-gray-500 uppercase tracking-wide font-medium">Total</div>
+					<div class="text-lg font-bold text-gray-900 mt-1">{ fmt.Sprint(data.Stats.TotalTasks) }</div>
+				</div>
+				<div class="flex-1 px-3 py-2 text-center bg-blue-50 min-w-[100px]">
+					<div class="text-xs text-blue-700 uppercase tracking-wide font-medium">Running</div>
+					<div class="text-lg font-bold text-blue-900 mt-1">{ fmt.Sprint(data.Stats.RunningTasks) }</div>
+				</div>
+				<div class="flex-1 px-3 py-2 text-center bg-green-50 min-w-[100px]">
+					<div class="text-xs text-green-700 uppercase tracking-wide font-medium">Success</div>
+					<div class="text-lg font-bold text-green-900 mt-1">{ fmt.Sprint(data.Stats.SuccessTasks) }</div>
+				</div>
+				<div class="flex-1 px-3 py-2 text-center bg-red-50 min-w-[100px]">
+					<div class="text-xs text-red-700 uppercase tracking-wide font-medium">Failed</div>
+					<div class="text-lg font-bold text-red-900 mt-1">{ fmt.Sprint(data.Stats.FailedTasks) }</div>
+				</div>
+				<div class="flex-1 px-3 py-2 text-center bg-gray-50 min-w-[100px]">
+					<div class="text-xs text-gray-600 uppercase tracking-wide font-medium">Idle</div>
+					<div class="text-lg font-bold text-gray-700 mt-1">{ fmt.Sprint(data.Stats.IdleTasks) }</div>
+				</div>
+				<div class="flex-1 px-3 py-2 text-center bg-purple-50 min-w-[100px]">
+					<div class="text-xs text-purple-700 uppercase tracking-wide font-medium">Executions</div>
+					<div class="text-lg font-bold text-purple-900 mt-1">{ fmt.Sprint(data.Stats.TotalExecutions) }</div>
+				</div>
+			</div>
+		</div>
+		<!-- Search and Filter Controls -->
+		if len(data.Tasks) > 0 {
+			<div class="bg-white rounded-lg shadow p-4 mb-6">
+				<div class="flex flex-col md:flex-row gap-4">
+					<!-- Search Input -->
+					<div class="flex-1">
+						<label for="searchInput" class="block text-sm font-medium text-gray-700 mb-1">Search Tasks</label>
+						<div class="relative">
+							<input
+								type="text"
+								id="searchInput"
+								class="form-input pl-10"
+								placeholder="Search by name or description..."
+								oninput="filterTasks()"
+							/>
+							<svg class="absolute left-3 top-3 w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+							</svg>
+						</div>
+					</div>
+					<!-- Status Filter -->
+					<div class="w-full md:w-48">
+						<label for="statusFilter" class="block text-sm font-medium text-gray-700 mb-1">Status</label>
+						<select id="statusFilter" class="form-input" onchange="filterTasks()">
+							<option value="all">All Status</option>
+							<option value="idle">Idle</option>
+							<option value="running">Running</option>
+							<option value="success">Success</option>
+							<option value="failed">Failed</option>
+							<option value="queued">Queued</option>
+						</select>
+					</div>
+					<!-- Tag Filter -->
+					<div class="w-full md:w-48">
+						<label for="tagFilter" class="block text-sm font-medium text-gray-700 mb-1">Tag</label>
+						<select id="tagFilter" class="form-input" onchange="filterTasks()">
+							<option value="all">All Tags</option>
+						</select>
+					</div>
+					<!-- Clear Filters Button -->
+					<div class="flex items-end">
+						<button onclick="clearFilters()" class="btn btn-secondary text-sm whitespace-nowrap">
+							<svg class="w-4 h-4 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+							</svg>
+							Clear
+						</button>
+					</div>
+				</div>
+				<!-- Results Count -->
+				<div class="mt-3 text-sm text-gray-600">
+					<span id="resultsCount">Showing all { fmt.Sprint(len(data.Tasks)) } tasks</span>
+				</div>
+			</div>
+		}
+		<!-- Task Cards -->
+		if len(data.Tasks) > 0 {
+			<div class="task-grid" id="taskGrid">
+				for _, task := range data.Tasks {
+					@components.TaskCard(task)
+				}
+			</div>
+			<div id="noResults" class="hidden flex flex-col items-center justify-center py-12 px-4">
+				<div class="text-6xl mb-4">🔍</div>
+				<h3 class="text-xl font-semibold text-gray-900 mb-2">No Tasks Found</h3>
+				<p class="text-gray-600 text-center max-w-md">Try adjusting your search or filters</p>
+			</div>
+		} else {
+			<div class="flex flex-col items-center justify-center py-12 px-4">
+				<div class="text-6xl mb-4">📋</div>
+				<h3 class="text-xl font-semibold text-gray-900 mb-2">No Tasks Configured</h3>
+				<p class="text-gray-600 text-center max-w-md">Add tasks to your configuration file to get started</p>
+			</div>
+		}
+	</div>
+	@dashboardScript(data.BaseData.CSRFToken)
+}
+
+// dashboardScript generates the dashboard JavaScript with CSRF token
+script dashboardScript(csrfToken string) {
+	// CSRF token for form submissions
+	const CSRF_TOKEN = csrfToken;
+
+		// Auto-refresh interval (5 seconds)
+		let autoRefreshInterval = null;
+		let autoRefreshEnabled = true;
+
+		// Initialize filters on page load
+		document.addEventListener('DOMContentLoaded', function() {
+			populateTagFilter();
+			// Restore filters from URL parameters
+			const params = new URLSearchParams(window.location.search);
+			if (params.get('search')) {
+				document.getElementById('searchInput').value = params.get('search');
+			}
+			if (params.get('status')) {
+				document.getElementById('statusFilter').value = params.get('status');
+			}
+			if (params.get('tag')) {
+				document.getElementById('tagFilter').value = params.get('tag');
+			}
+			if (params.has('search') || params.has('status') || params.has('tag')) {
+				filterTasks();
+			}
+
+			// Start auto-refresh
+			startAutoRefresh();
+		});
+
+		// Populate tag filter with unique tags from all tasks
+		function populateTagFilter() {
+			const tagFilter = document.getElementById('tagFilter');
+			const tasks = document.querySelectorAll('.task-card');
+			const tags = new Set();
+
+			tasks.forEach(card => {
+				const tagElements = card.querySelectorAll('.tag');
+				tagElements.forEach(tag => {
+					tags.add(tag.textContent.trim());
+				});
+			});
+
+			// Add unique tags to filter
+			Array.from(tags).sort().forEach(tag => {
+				const option = document.createElement('option');
+				option.value = tag;
+				option.textContent = tag;
+				tagFilter.appendChild(option);
+			});
+		}
+
+		// Debounce function for search input
+		let debounceTimer;
+		function debounce(func, delay) {
+			clearTimeout(debounceTimer);
+			debounceTimer = setTimeout(func, delay);
+		}
+
+		// Filter tasks based on search and filter criteria
+		window.filterTasks = function() {
+			const searchInput = document.getElementById('searchInput').value.toLowerCase();
+			const statusFilter = document.getElementById('statusFilter').value;
+			const tagFilter = document.getElementById('tagFilter').value;
+
+			const taskCards = document.querySelectorAll('.task-card');
+			const taskGrid = document.getElementById('taskGrid');
+			const noResults = document.getElementById('noResults');
+			let visibleCount = 0;
+
+			taskCards.forEach(card => {
+				const taskName = card.querySelector('.task-title span').textContent.toLowerCase();
+				const taskDescription = card.querySelector('.task-description').textContent.toLowerCase();
+				const taskStatus = card.querySelector('.status-badge').textContent.trim().toLowerCase();
+				const taskTags = Array.from(card.querySelectorAll('.tag')).map(tag => tag.textContent.trim());
+
+				// Check search match
+				const searchMatch = searchInput === '' ||
+					taskName.includes(searchInput) ||
+					taskDescription.includes(searchInput);
+
+				// Check status match
+				const statusMatch = statusFilter === 'all' || taskStatus === statusFilter;
+
+				// Check tag match
+				const tagMatch = tagFilter === 'all' || taskTags.includes(tagFilter);
+
+				// Show/hide card based on all criteria
+				if (searchMatch && statusMatch && tagMatch) {
+					card.style.display = '';
+					visibleCount++;
+				} else {
+					card.style.display = 'none';
+				}
+			});
+
+			// Update results count
+			const resultsCount = document.getElementById('resultsCount');
+			const totalTasks = taskCards.length;
+			if (visibleCount === totalTasks) {
+				resultsCount.textContent = `Showing all ${totalTasks} tasks`;
+			} else {
+				resultsCount.textContent = `Showing ${visibleCount} of ${totalTasks} tasks`;
+			}
+
+			// Show/hide "no results" message
+			if (visibleCount === 0) {
+				taskGrid.style.display = 'none';
+				noResults.classList.remove('hidden');
+				noResults.classList.add('flex');
+			} else {
+				taskGrid.style.display = '';
+				noResults.classList.remove('flex');
+				noResults.classList.add('hidden');
+			}
+
+			// Update URL parameters
+			updateURLParams();
+		}
+
+		// Update URL parameters for shareable links
+		function updateURLParams() {
+			const searchInput = document.getElementById('searchInput').value;
+			const statusFilter = document.getElementById('statusFilter').value;
+			const tagFilter = document.getElementById('tagFilter').value;
+
+			const params = new URLSearchParams();
+			if (searchInput) params.set('search', searchInput);
+			if (statusFilter !== 'all') params.set('status', statusFilter);
+			if (tagFilter !== 'all') params.set('tag', tagFilter);
+
+			const newURL = params.toString() ?
+				`${window.location.pathname}?${params.toString()}` :
+				window.location.pathname;
+
+			window.history.replaceState({}, '', newURL);
+		}
+
+		// Clear all filters
+		window.clearFilters = function() {
+			document.getElementById('searchInput').value = '';
+			document.getElementById('statusFilter').value = 'all';
+			document.getElementById('tagFilter').value = 'all';
+			filterTasks();
+		}
+
+		// Auto-refresh functionality
+		function startAutoRefresh() {
+			if (autoRefreshInterval) clearInterval(autoRefreshInterval);
+			autoRefreshInterval = setInterval(updateDashboardStatus, 5000);
+		}
+
+		function stopAutoRefresh() {
+			if (autoRefreshInterval) {
+				clearInterval(autoRefreshInterval);
+				autoRefreshInterval = null;
+			}
+		}
+
+		function updateDashboardStatus() {
+			if (!autoRefreshEnabled) return;
+
+			fetch('/api/status', {
+				credentials: 'same-origin'
+			})
+				.then(res => res.json())
+				.then(data => {
+					updateStats(data.stats);
+					updateTasks(data.tasks);
+				})
+				.catch(err => {
+					console.error('Failed to update status:', err);
+				});
+		}
+
+		function updateStats(stats) {
+			// Update statistics cards if they exist
+			const statsCards = document.querySelectorAll('[class*="font-bold"][class*="text-2xl"]');
+			if (stats && statsCards.length >= 6) {
+				statsCards[1].textContent = stats.running || 0; // Running
+				statsCards[2].textContent = stats.success || 0; // Success
+				statsCards[3].textContent = stats.failed || 0; // Failed
+				statsCards[5].textContent = stats.executions || 0; // Executions
+			}
+		}
+
+		function updateTasks(tasks) {
+			if (!tasks) return;
+
+			tasks.forEach(taskData => {
+				const card = findTaskCard(taskData.name);
+				if (!card) return;
+
+				// Update status badge
+				const statusBadge = card.querySelector('.status-badge');
+				if (statusBadge) {
+					const oldStatus = statusBadge.textContent.trim().toLowerCase();
+					const newStatus = taskData.status;
+
+					if (oldStatus !== newStatus) {
+						statusBadge.textContent = newStatus;
+						statusBadge.className = 'status-badge status-' + newStatus;
+
+						// Update status icon
+						const icon = card.querySelector('.task-title svg');
+						if (icon) {
+							icon.outerHTML = getStatusIconHTML(newStatus);
+						}
+					}
+				}
+
+				// Update last run time and duration
+				const metaDiv = card.querySelector('.task-meta');
+				if (taskData.last_run && taskData.duration) {
+					const lastRunDate = new Date(taskData.last_run);
+					const durationText = formatDuration(taskData.duration);
+
+					if (metaDiv) {
+						const lastRunSpan = metaDiv.querySelector('.flex.items-center:first-child span');
+						const durationSpan = metaDiv.querySelector('.flex.items-center:last-child span');
+
+						if (lastRunSpan) {
+							lastRunSpan.textContent = lastRunDate.toLocaleString('en-US', {
+								month: 'short',
+								day: '2-digit',
+								year: 'numeric',
+								hour: '2-digit',
+								minute: '2-digit',
+								second: '2-digit'
+							});
+						}
+						if (durationSpan) {
+							durationSpan.textContent = durationText;
+						}
+					}
+				}
+			});
+
+			// Re-apply filters after update
+			filterTasks();
+		}
+
+		function findTaskCard(taskName) {
+			const cards = document.querySelectorAll('.task-card');
+			for (let card of cards) {
+				const titleSpan = card.querySelector('.task-title span');
+				if (titleSpan && titleSpan.textContent === taskName) {
+					return card;
+				}
+			}
+			return null;
+		}
+
+		function formatDuration(seconds) {
+			if (seconds < 1) {
+				return (seconds * 1000).toFixed(0) + 'ms';
+			} else if (seconds < 60) {
+				return seconds.toFixed(2) + 's';
+			} else {
+				const minutes = Math.floor(seconds / 60);
+				const secs = (seconds % 60).toFixed(0);
+				return `${minutes}m ${secs}s`;
+			}
+		}
+
+		function getStatusIconHTML(status) {
+			const icons = {
+				'success': '<svg class="w-6 h-6 text-green-600" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"></path></svg>',
+				'failed': '<svg class="w-6 h-6 text-red-600" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"></path></svg>',
+				'running': '<svg class="w-6 h-6 text-blue-600 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>',
+				'queued': '<svg class="w-6 h-6 text-yellow-600" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clip-rule="evenodd"></path></svg>',
+				'idle': '<svg class="w-6 h-6 text-gray-400" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm0-2a6 6 0 100-12 6 6 0 000 12z" clip-rule="evenodd"></path></svg>'
+			};
+			return icons[status] || icons['idle'];
+		}
+
+		function showError(taskName, message) {
+			const errorDiv = document.getElementById('error-' + taskName);
+			if (errorDiv) {
+				errorDiv.textContent = message;
+				errorDiv.classList.remove('hidden');
+				// Auto-hide after 5 seconds
+				setTimeout(() => {
+					errorDiv.classList.add('hidden');
+				}, 5000);
+			}
+		}
+
+		window.runTask = function(taskName) {
+			const btn = event.target;
+			const errorDiv = document.getElementById('error-' + taskName);
+
+			// Hide any previous error
+			if (errorDiv) {
+				errorDiv.classList.add('hidden');
+			}
+
+			btn.disabled = true;
+			btn.textContent = 'Starting...';
+
+			fetch('/tasks/' + taskName + '/execute', {
+				method: 'POST',
+				credentials: 'same-origin',
+				headers: {
+					'X-CSRF-Token': CSRF_TOKEN
+				}
+			})
+				.then(res => res.json())
+				.then(data => {
+					if (data.success) {
+						// Immediately update status
+						updateDashboardStatus();
+						btn.disabled = false;
+						btn.textContent = 'Run';
+					} else {
+						showError(taskName, 'Error: ' + (data.message || 'Failed to start task'));
+						btn.disabled = false;
+						btn.textContent = 'Run';
+					}
+				})
+				.catch(err => {
+					showError(taskName, 'Failed to start task: ' + err);
+					btn.disabled = false;
+					btn.textContent = 'Run';
+				});
+		}
+}
+
+// DashboardPageData contains data for the dashboard page
+type DashboardPageData struct {
+	BaseData layouts.BaseData
+	Tasks    []templates.TaskCard
+	Stats    templates.DashboardStats
+}

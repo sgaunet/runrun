@@ -121,9 +121,17 @@ func (e *TaskExecutor) executeTask(req *TaskRequest) {
 	e.updateExecutionStatus(executionID, StatusRunning)
 	e.setExecutionStartTime(executionID, time.Now())
 
+	// Broadcast execution start
+	if e.broadcaster != nil {
+		e.broadcaster.BroadcastLogWithLevel(executionID,
+			fmt.Sprintf("Execution started: %s (ID: %s)", task.Name, executionID), "info")
+	}
+
 	// Create step executor
 	stepExec := &DefaultStepExecutor{
 		logDirectory: e.logDirectory,
+		broadcaster:  e.broadcaster,
+		executionID:  executionID,
 	}
 
 	// Execute steps sequentially
@@ -131,18 +139,28 @@ func (e *TaskExecutor) executeTask(req *TaskRequest) {
 	for i, step := range task.Steps {
 		log.Printf("Executing step %d/%d for task '%s': %s", i+1, len(task.Steps), task.Name, step.Name)
 
+		// Broadcast step start
+		if e.broadcaster != nil {
+			e.broadcaster.BroadcastLogWithLevel(executionID,
+				fmt.Sprintf("Step %d/%d: %s", i+1, len(task.Steps), step.Name), "info")
+		}
+
 		// Create context with timeout
 		stepCtx, cancel := context.WithTimeout(req.Context, task.Timeout)
 
 		// Execute step
-		stepExec, err := stepExec.ExecuteStep(stepCtx, &step, task.WorkingDirectory, task.Environment)
+		stepResult, err := stepExec.ExecuteStep(stepCtx, &step, task.WorkingDirectory, task.Environment)
 		cancel()
 
 		// Store step execution
-		e.addStepExecution(executionID, stepExec)
+		e.addStepExecution(executionID, stepResult)
 
 		if err != nil {
 			log.Printf("Step '%s' failed for task '%s': %v", step.Name, task.Name, err)
+			if e.broadcaster != nil {
+				e.broadcaster.BroadcastLogWithLevel(executionID,
+					fmt.Sprintf("Step '%s' failed: %v", step.Name, err), "error")
+			}
 			lastError = err
 			break
 		}
@@ -152,10 +170,13 @@ func (e *TaskExecutor) executeTask(req *TaskRequest) {
 
 	// Update final status
 	finishTime := time.Now()
+	var finalStatus ExecutionStatus
 	if lastError != nil {
+		finalStatus = StatusFailed
 		e.updateExecutionStatus(executionID, StatusFailed)
 		e.setExecutionError(executionID, lastError)
 	} else {
+		finalStatus = StatusSuccess
 		e.updateExecutionStatus(executionID, StatusSuccess)
 	}
 	e.setExecutionFinishTime(executionID, finishTime)
@@ -169,6 +190,11 @@ func (e *TaskExecutor) executeTask(req *TaskRequest) {
 			e.setLogFilePath(executionID, execution.LogFilePath)
 			log.Printf("Log file written: %s", execution.LogFilePath)
 		}
+	}
+
+	// Broadcast completion after setting final status and writing log file
+	if e.broadcaster != nil {
+		e.broadcaster.BroadcastComplete(executionID, string(finalStatus))
 	}
 
 	log.Printf("Task '%s' execution completed with status: %s (ID: %s)",
@@ -200,6 +226,11 @@ func (e *TaskExecutor) Shutdown() error {
 		log.Println("Worker shutdown timeout exceeded")
 		return fmt.Errorf("shutdown timeout exceeded")
 	}
+}
+
+// SetBroadcaster sets the real-time log broadcaster
+func (e *TaskExecutor) SetBroadcaster(b LogBroadcaster) {
+	e.broadcaster = b
 }
 
 // GetQueueDepth returns the current queue depth

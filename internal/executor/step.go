@@ -1,13 +1,16 @@
 package executor
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/sgaunet/runrun/internal/config"
@@ -16,6 +19,8 @@ import (
 // DefaultStepExecutor implements step execution using os/exec
 type DefaultStepExecutor struct {
 	logDirectory string
+	broadcaster  LogBroadcaster
+	executionID  string
 }
 
 // ExecuteStep executes a single step
@@ -41,8 +46,78 @@ func (s *DefaultStepExecutor) ExecuteStep(ctx context.Context, step *config.Step
 		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", key, value))
 	}
 
-	// Capture output
+	// Capture output - with optional real-time broadcasting
 	var stdout, stderr bytes.Buffer
+
+	if s.broadcaster != nil && s.executionID != "" {
+		// Real-time streaming mode: tee output to both buffer and broadcaster
+		stdoutPR, stdoutPW := io.Pipe()
+		stderrPR, stderrPW := io.Pipe()
+
+		cmd.Stdout = io.MultiWriter(&stdout, stdoutPW)
+		cmd.Stderr = io.MultiWriter(&stderr, stderrPW)
+
+		var wg sync.WaitGroup
+		wg.Add(2)
+
+		// Goroutine to read stdout lines and broadcast
+		go func() {
+			defer wg.Done()
+			scanner := bufio.NewScanner(stdoutPR)
+			scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024) // 1MB max line
+			for scanner.Scan() {
+				s.broadcaster.BroadcastLog(s.executionID, scanner.Text())
+			}
+		}()
+
+		// Goroutine to read stderr lines and broadcast
+		go func() {
+			defer wg.Done()
+			scanner := bufio.NewScanner(stderrPR)
+			scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024) // 1MB max line
+			for scanner.Scan() {
+				s.broadcaster.BroadcastLogWithLevel(s.executionID, scanner.Text(), "error")
+			}
+		}()
+
+		// Execute command
+		err := cmd.Run()
+
+		// Close pipe writers so scanner goroutines finish
+		stdoutPW.Close()
+		stderrPW.Close()
+
+		// Wait for all lines to be broadcast before continuing
+		wg.Wait()
+
+		// Record finish time
+		finishTime := time.Now()
+		stepExec.FinishedAt = &finishTime
+		stepExec.Duration = finishTime.Sub(stepExec.StartedAt)
+
+		// Combine stdout and stderr
+		output := append(stdout.Bytes(), stderr.Bytes()...)
+		stepExec.Output = output
+
+		// Get exit code
+		if err != nil {
+			exitErr := &exec.ExitError{}
+			if errors.As(err, &exitErr) {
+				stepExec.ExitCode = exitErr.ExitCode()
+			} else {
+				stepExec.ExitCode = -1
+			}
+			stepExec.Status = StatusFailed
+			stepExec.Error = err
+			return stepExec, fmt.Errorf("step '%s' failed: %w", step.Name, err)
+		}
+
+		stepExec.ExitCode = 0
+		stepExec.Status = StatusSuccess
+		return stepExec, nil
+	}
+
+	// Original behavior: no broadcaster
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 

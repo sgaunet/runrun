@@ -59,6 +59,9 @@ func New(cfg *config.Config) *Server {
 	s.wsHandler = websocket.NewHandler(s.wsHub, wsConfig)
 	s.wsBroadcaster = websocket.NewBroadcaster(s.wsHub)
 
+	// Wire broadcaster to executor for real-time log streaming
+	s.executor.SetBroadcaster(s.wsBroadcaster)
+
 	// Initialize rate limiter (5 login attempts per 15 minutes)
 	s.rateLimiter = ratelimit.NewLimiter(5, 15*time.Minute)
 

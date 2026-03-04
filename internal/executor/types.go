@@ -73,6 +73,9 @@ type TaskExecutor struct {
 	// State management
 	executions      map[string]*Execution
 	executionsMutex sync.RWMutex
+
+	// Real-time log broadcasting
+	broadcaster LogBroadcaster
 }
 
 // StateManager interface for execution state tracking
@@ -80,6 +83,13 @@ type StateManager interface {
 	GetExecution(executionID string) (*Execution, error)
 	UpdateExecution(executionID string, execution *Execution) error
 	ListExecutions(taskName string) ([]*Execution, error)
+}
+
+// LogBroadcaster broadcasts log messages to connected clients in real-time
+type LogBroadcaster interface {
+	BroadcastLog(executionID, logLine string)
+	BroadcastLogWithLevel(executionID, logLine, level string)
+	BroadcastComplete(executionID, status string)
 }
 
 // StepExecutor interface for executing individual steps

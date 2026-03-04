@@ -1,10 +1,21 @@
 package websocket
 
 import (
+	"fmt"
 	"log"
 	"sync"
+	"sync/atomic"
 	"time"
+
+	"github.com/gorilla/websocket"
 )
+
+// clientIDCounter is used to generate unique client IDs
+var clientIDCounter atomic.Uint64
+
+func generateClientID() string {
+	return fmt.Sprintf("client-%d", clientIDCounter.Add(1))
+}
 
 // NewHub creates a new WebSocket hub
 func NewHub(config *Config) *Hub {
@@ -148,6 +159,18 @@ func (h *Hub) evictIdleClients() {
 		log.Printf("Evicting idle WebSocket client: %s (last activity: %s)", client.ID, client.GetLastActivity().Format(time.RFC3339))
 		h.unregisterClient(client)
 	}
+}
+
+// RegisterClient creates a new client for the given connection and registers it with the Hub
+func (h *Hub) RegisterClient(conn *websocket.Conn) *Client {
+	client := NewClient(h, conn, generateClientID(), h.config)
+	h.Register <- client
+	return client
+}
+
+// UnregisterClient unregisters a client from the Hub
+func (h *Hub) UnregisterClient(client *Client) {
+	h.Unregister <- client
 }
 
 // Subscribe adds a client to an execution's subscription list

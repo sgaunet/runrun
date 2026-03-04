@@ -48,6 +48,9 @@ class LogViewer {
                     <div class="flex-1">
                         <input type="text" id="logSearch" placeholder="Search logs..." class="form-input text-sm w-full max-w-md" />
                     </div>
+                    <div class="flex items-center gap-2 text-sm text-gray-600">
+                        <span>Lines: <span id="lineCount">0</span></span>
+                    </div>
                     <div class="flex items-center gap-2">
                         <input type="checkbox" id="autoScrollToggle" checked class="rounded" />
                         <label for="autoScrollToggle" class="text-sm text-gray-600">Auto-scroll</label>
@@ -202,6 +205,17 @@ class LogViewer {
         });
 
         this.render();
+        this.updateLineCount();
+    }
+
+    updateLineCount() {
+        const el = document.getElementById('lineCount');
+        if (!el) return;
+        if (this.filteredLines.length !== this.lines.length) {
+            el.textContent = `${this.filteredLines.length} / ${this.lines.length}`;
+        } else {
+            el.textContent = `${this.lines.length}`;
+        }
     }
 
     render() {
@@ -245,6 +259,7 @@ class LogViewer {
         this.lines = [];
         this.filteredLines = [];
         this.render();
+        this.updateLineCount();
     }
 
     download() {
@@ -266,11 +281,15 @@ class LogViewer {
 
     copy() {
         const text = this.lines.map(line => line.text).join('\n');
+        const btn = document.getElementById('copyLogsBtn');
         navigator.clipboard.writeText(text).then(() => {
-            alert('Logs copied to clipboard');
+            if (btn) {
+                const orig = btn.textContent;
+                btn.textContent = 'Copied!';
+                setTimeout(() => { btn.textContent = orig; }, 2000);
+            }
         }).catch(err => {
             console.error('Failed to copy logs:', err);
-            alert('Failed to copy logs to clipboard');
         });
     }
 

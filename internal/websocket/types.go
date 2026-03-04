@@ -27,6 +27,8 @@ const (
 	MessageTypeSubscribed MessageType = "subscribed"
 	// MessageTypeUnsubscribed is sent by server to confirm unsubscription
 	MessageTypeUnsubscribed MessageType = "unsubscribed"
+	// MessageTypeComplete is sent by server when an execution completes
+	MessageTypeComplete MessageType = "complete"
 )
 
 // Message represents a WebSocket message

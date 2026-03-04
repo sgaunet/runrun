@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"html"
-	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -593,9 +592,6 @@ func (s *Server) wsLogsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Step 4: Validate JWT token and verify session exists
-	// This performs two-tier validation:
-	// 1. JWT signature and expiration check
-	// 2. Session store lookup (enables token revocation)
 	username, err := s.authService.ValidateSession(token)
 	if err != nil {
 		log.Printf("WebSocket auth failed for %s: invalid session - %v", executionID, err)
@@ -614,8 +610,6 @@ func (s *Server) wsLogsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// === WEBSOCKET UPGRADE ===
-	// Upgrade HTTP connection to WebSocket protocol
-	// Origin validation is performed by the upgrader's CheckOrigin function
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Printf("WebSocket upgrade failed: %v", err)
@@ -623,201 +617,152 @@ func (s *Server) wsLogsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	// If no log file, check if execution is finished or in progress
-	if execution.LogFilePath == "" {
-		if execution.FinishedAt != nil {
-			// Execution finished but log file is missing/deleted
-			msg := map[string]interface{}{
-				"type": "log",
-				"data": map[string]interface{}{
-					"line":      fmt.Sprintf("[Execution completed with status: %s]\n[Log file not available]", execution.Status),
-					"timestamp": execution.FinishedAt.Format(time.RFC3339),
-					"level":     "info",
-				},
-			}
-			writeWSJSON(conn, msg)
+	// Determine mode: running executions get real-time streaming via Hub,
+	// completed executions get log file streaming
+	isRunning := execution.FinishedAt == nil
 
-			// Keep connection open to prevent reconnect loop
-			// Wait for client to close or timeout
-			ticker := time.NewTicker(30 * time.Second)
-			defer ticker.Stop()
-
-			select {
-			case <-ticker.C:
-				// Timeout after 30 seconds
-				return
-			case <-r.Context().Done():
-				// Request cancelled
-				return
-			}
-		} else {
-			// Execution in progress - wait for log file to be created
-			msg := map[string]interface{}{
-				"type": "log",
-				"data": map[string]interface{}{
-					"line":      "Waiting for log output...",
-					"timestamp": time.Now().Format(time.RFC3339),
-					"level":     "info",
-				},
-			}
-			writeWSJSON(conn, msg)
-
-			// Poll for log file to be created (executor sets LogFilePath after task completes)
-			pollTicker := time.NewTicker(500 * time.Millisecond)
-			defer pollTicker.Stop()
-
-			timeout := time.After(30 * time.Second)
-			for {
-				select {
-				case <-timeout:
-					// Timeout after 30 seconds
-					timeoutMsg := map[string]interface{}{
-						"type": "log",
-						"data": map[string]interface{}{
-							"line":      "[Timeout waiting for log file]",
-							"timestamp": time.Now().Format(time.RFC3339),
-							"level":     "warning",
-						},
-					}
-					writeWSJSON(conn, timeoutMsg)
-					return
-				case <-r.Context().Done():
-					// Request cancelled
-					return
-				case <-pollTicker.C:
-					// Check if log file has been set
-					currentExec, pollErr := s.executor.GetExecution(executionID)
-					if pollErr != nil {
-						return
-					}
-					if currentExec.LogFilePath != "" {
-						// Log file created! Update execution and break out to stream it
-						execution = currentExec
-						goto openLogFile
-					}
-					// Check if execution finished without creating log file
-					if currentExec.FinishedAt != nil {
-						msg := map[string]interface{}{
-							"type": "log",
-							"data": map[string]interface{}{
-								"line":      fmt.Sprintf("[Execution completed with status: %s]\n[No log file created]", currentExec.Status),
-								"timestamp": currentExec.FinishedAt.Format(time.RFC3339),
-								"level":     "info",
-							},
-						}
-						writeWSJSON(conn, msg)
-						return
-					}
-				}
-			}
-		}
+	if isRunning {
+		// Real-time mode: register client with Hub and subscribe to execution
+		s.wsLogsRealtime(conn, r, executionID)
+	} else {
+		// Completed mode: stream from log file
+		s.wsLogsFromFile(conn, r, execution, executionID)
 	}
+}
 
-openLogFile:
+// wsLogsRealtime handles WebSocket connections for running executions.
+// It registers the client with the Hub so it receives real-time broadcasts from the executor.
+func (s *Server) wsLogsRealtime(conn *websocket.Conn, r *http.Request, executionID string) {
+	// Create a Hub client for this connection
+	client := s.wsHub.RegisterClient(conn)
 
-	// Open log file
-	file, err := os.Open(execution.LogFilePath)
-	if err != nil {
-		msg := map[string]interface{}{
-			"type": "error",
-			"data": map[string]interface{}{
-				"message": fmt.Sprintf("Failed to open log file: %v", err),
-			},
-		}
-		writeWSJSON(conn, msg)
-		return
-	}
-	defer file.Close()
+	// Subscribe to this execution's log stream
+	s.wsHub.Subscribe(client, executionID)
 
-	// Seek to beginning of file to stream all logs
-	_, err = file.Seek(0, 0)
-	if err != nil {
-		log.Printf("Failed to seek log file: %v", err)
-		return
-	}
+	// Ensure cleanup on exit
+	defer func() {
+		s.wsHub.Unsubscribe(client, executionID)
+		s.wsHub.UnregisterClient(client)
+	}()
 
-	// Create buffered reader for efficient line reading
-	reader := bufio.NewReader(file)
-
-	// Channel to signal when to stop
-	done := make(chan bool)
-
-	// Start goroutine to listen for client close messages
+	// Read pump: listen for client messages (close, pong, etc.)
+	// This blocks until the client disconnects or an error occurs
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
+		conn.SetReadLimit(512)
 		for {
-			if _, _, err := conn.ReadMessage(); err != nil {
-				close(done)
+			_, _, err := conn.ReadMessage()
+			if err != nil {
 				return
 			}
 		}
 	}()
 
-	// Stream log lines
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
-
+	// Write pump: forward messages from Hub's send channel to the WebSocket
 	for {
 		select {
+		case message, ok := <-client.Send:
+			if !ok {
+				// Hub closed the channel
+				return
+			}
+			if err := conn.WriteMessage(websocket.TextMessage, message); err != nil {
+				return
+			}
 		case <-done:
 			return
-		case <-ticker.C:
-			// Read all available lines
-			for {
-				line, err := reader.ReadString('\n')
-				if err != nil {
-					if err == io.EOF {
-						// Check if execution is finished
-						currentExec, _ := s.executor.GetExecution(executionID)
-						if currentExec != nil && currentExec.FinishedAt != nil {
-							// Execution finished, send final message and keep connection open
-							msg := map[string]interface{}{
-								"type": "log",
-								"data": map[string]interface{}{
-									"line":      fmt.Sprintf("\n[Execution finished with status: %s]", currentExec.Status),
-									"timestamp": currentExec.FinishedAt.Format(time.RFC3339),
-									"level":     "info",
-								},
-							}
-							writeWSJSON(conn, msg)
+		case <-r.Context().Done():
+			return
+		}
+	}
+}
 
-							// Keep connection open to prevent reconnect loop
-							// Wait for client to close or timeout
-							completeTicker := time.NewTicker(30 * time.Second)
-							defer completeTicker.Stop()
+// wsLogsFromFile streams log content from a completed execution's log file
+func (s *Server) wsLogsFromFile(conn *websocket.Conn, r *http.Request, execution *executor.Execution, executionID string) {
+	if execution.LogFilePath == "" {
+		// No log file available
+		msg := map[string]interface{}{
+			"type": "log",
+			"data": map[string]interface{}{
+				"line":      fmt.Sprintf("[Execution completed with status: %s]\n[Log file not available]", execution.Status),
+				"timestamp": time.Now().Format(time.RFC3339),
+				"level":     "info",
+			},
+		}
+		writeWSJSON(conn, msg)
 
-							select {
-							case <-completeTicker.C:
-								// Timeout after 30 seconds
-								return
-							case <-r.Context().Done():
-								// Request cancelled
-								return
-							}
-						}
-						// No more lines available yet, break and wait
-						break
-					}
-					// Other error, close connection
-					log.Printf("Error reading log file: %v", err)
-					return
-				}
+		// Send complete message so client knows not to reconnect
+		completeMsg := map[string]interface{}{
+			"type":         "complete",
+			"execution_id": executionID,
+			"data":         map[string]string{"status": string(execution.Status)},
+			"timestamp":    time.Now().Format(time.RFC3339),
+		}
+		writeWSJSON(conn, completeMsg)
+		return
+	}
 
-				// Send line to client
-				msg := map[string]interface{}{
-					"type": "log",
-					"data": map[string]interface{}{
-						"line":      line,
-						"timestamp": time.Now().Format(time.RFC3339),
-						"level":     "info",
-					},
-				}
+	// Open and stream the log file
+	file, err := os.Open(execution.LogFilePath)
+	if err != nil {
+		writeWSJSON(conn, map[string]interface{}{
+			"type": "error",
+			"data": map[string]interface{}{
+				"message": fmt.Sprintf("Failed to open log file: %v", err),
+			},
+		})
+		return
+	}
+	defer file.Close()
 
-				if err := conn.WriteJSON(msg); err != nil {
-					log.Printf("Error writing to WebSocket: %v", err)
-					return
-				}
+	// Channel to detect client disconnect
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				return
 			}
 		}
+	}()
+
+	// Stream all lines from the log file
+	reader := bufio.NewReader(file)
+	for {
+		line, err := reader.ReadString('\n')
+		if line != "" {
+			msg := map[string]interface{}{
+				"type": "log",
+				"data": map[string]interface{}{
+					"line":      line,
+					"timestamp": time.Now().Format(time.RFC3339),
+					"level":     "info",
+				},
+			}
+			if writeErr := conn.WriteJSON(msg); writeErr != nil {
+				return
+			}
+		}
+		if err != nil {
+			break
+		}
+	}
+
+	// Send complete message
+	completeMsg := map[string]interface{}{
+		"type":         "complete",
+		"execution_id": executionID,
+		"data":         map[string]string{"status": string(execution.Status)},
+		"timestamp":    time.Now().Format(time.RFC3339),
+	}
+	writeWSJSON(conn, completeMsg)
+
+	// Wait briefly for client to receive the complete message before closing
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+	case <-r.Context().Done():
 	}
 }
 

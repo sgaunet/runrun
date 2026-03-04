@@ -108,6 +108,21 @@ script logsScript(executionID string) {
 							timestamp: new Date(message.data.timestamp),
 							level: message.data.level
 						});
+					} else if (message.type === 'complete' && message.data) {
+						// Update status badge on the page
+						const statusBadge = document.querySelector('.status-badge');
+						if (statusBadge) {
+							const oldStatus = statusBadge.textContent.trim();
+							const newStatus = message.data.status || 'unknown';
+							statusBadge.textContent = newStatus;
+							statusBadge.className = statusBadge.className.replace('status-' + oldStatus, 'status-' + newStatus);
+						}
+						// Stop reconnect attempts
+						reconnectAttempts = maxReconnectAttempts;
+						logViewer.addLine(`[Execution completed: ${message.data.status}]`, {
+							timestamp: new Date(),
+							level: 'info'
+						});
 					}
 				} catch (e) {
 					console.error('Failed to parse WebSocket message:', e);

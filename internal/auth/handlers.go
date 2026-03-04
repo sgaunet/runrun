@@ -131,12 +131,22 @@ func (s *Service) LogoutHandler(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteStrictMode,
 	})
 
-	// Return success response
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(LoginResponse{
-		Success: true,
-		Message: "Logout successful",
-	})
+	// Check if this is a browser form submission or API call
+	acceptHeader := r.Header.Get("Accept")
+	contentType := r.Header.Get("Content-Type")
+
+	// If JSON was sent or JSON is explicitly requested, return JSON
+	if contentType == "application/json" || acceptHeader == "application/json" {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(LoginResponse{
+			Success: true,
+			Message: "Logout successful",
+		})
+		return
+	}
+
+	// Otherwise, redirect to login page (browser form submission)
+	http.Redirect(w, r, "/login", http.StatusSeeOther)
 }
 
 // LoginPageHandler serves the login page HTML

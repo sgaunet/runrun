@@ -114,21 +114,44 @@ func TestLogoutHandler(t *testing.T) {
 		setupRequest   func(*http.Request)
 		expectedStatus int
 		checkCleared   bool
+		checkRedirect  string
 	}{
 		{
-			name: "Valid logout",
+			name: "Valid logout with JSON accept header",
+			setupRequest: func(r *http.Request) {
+				r.AddCookie(&http.Cookie{
+					Name:  SessionCookieName,
+					Value: token,
+				})
+				r.Header.Set("Accept", "application/json")
+			},
+			expectedStatus: http.StatusOK,
+			checkCleared:   true,
+		},
+		{
+			name: "Valid logout browser form redirects to login",
 			setupRequest: func(r *http.Request) {
 				r.AddCookie(&http.Cookie{
 					Name:  SessionCookieName,
 					Value: token,
 				})
 			},
-			expectedStatus: http.StatusOK,
+			expectedStatus: http.StatusSeeOther,
 			checkCleared:   true,
+			checkRedirect:  "/login",
 		},
 		{
-			name:           "Logout without session",
+			name:           "Logout without session redirects to login",
 			setupRequest:   func(r *http.Request) {},
+			expectedStatus: http.StatusSeeOther,
+			checkCleared:   true,
+			checkRedirect:  "/login",
+		},
+		{
+			name: "Logout with JSON content-type returns JSON",
+			setupRequest: func(r *http.Request) {
+				r.Header.Set("Content-Type", "application/json")
+			},
 			expectedStatus: http.StatusOK,
 			checkCleared:   true,
 		},
@@ -144,6 +167,13 @@ func TestLogoutHandler(t *testing.T) {
 
 			if rr.Code != tt.expectedStatus {
 				t.Errorf("Expected status %d, got %d", tt.expectedStatus, rr.Code)
+			}
+
+			if tt.checkRedirect != "" {
+				location := rr.Header().Get("Location")
+				if location != tt.checkRedirect {
+					t.Errorf("Expected redirect to %s, got %s", tt.checkRedirect, location)
+				}
 			}
 
 			if tt.checkCleared {
@@ -258,6 +288,15 @@ func TestLogoutHandlerJSONResponse(t *testing.T) {
 
 	if rr.Code != http.StatusOK {
 		t.Errorf("Expected status %d, got %d", http.StatusOK, rr.Code)
+	}
+
+	// Verify JSON response body
+	var resp LoginResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("Failed to decode JSON response: %v", err)
+	}
+	if !resp.Success {
+		t.Error("Expected success=true in JSON response")
 	}
 
 	// Verify session was revoked

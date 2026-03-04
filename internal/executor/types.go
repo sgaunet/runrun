@@ -90,6 +90,8 @@ type LogBroadcaster interface {
 	BroadcastLog(executionID, logLine string)
 	BroadcastLogWithLevel(executionID, logLine, level string)
 	BroadcastComplete(executionID, status string)
+	EnableBuffering(executionID string)
+	FlushBuffer(executionID string)
 }
 
 // StepExecutor interface for executing individual steps

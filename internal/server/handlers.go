@@ -35,6 +35,30 @@ func writeWSJSON(conn *websocket.Conn, v any) {
 	}
 }
 
+// sendLogBatch sends a batch of log lines as a single WebSocket message.
+// For single-line batches, sends as a regular "log" message for backward compatibility.
+func sendLogBatch(conn *websocket.Conn, executionID string, batch []map[string]interface{}) error {
+	if len(batch) == 0 {
+		return nil
+	}
+
+	if len(batch) == 1 {
+		msg := map[string]interface{}{
+			"type": "log",
+			"data": batch[0],
+		}
+		return conn.WriteJSON(msg)
+	}
+
+	msg := map[string]interface{}{
+		"type":         "log_batch",
+		"execution_id": executionID,
+		"data":         batch,
+		"timestamp":    time.Now().Format(time.RFC3339),
+	}
+	return conn.WriteJSON(msg)
+}
+
 // HealthResponse represents the health check response
 type HealthResponse struct {
 	Status    string            `json:"status"`
@@ -727,25 +751,38 @@ func (s *Server) wsLogsFromFile(conn *websocket.Conn, r *http.Request, execution
 		}
 	}()
 
-	// Stream all lines from the log file
+	// Stream lines from the log file in batches for efficiency
+	batchSize := s.wsHub.GetConfig().FileStreamBatchSize
+	if batchSize <= 0 {
+		batchSize = 100
+	}
+
 	reader := bufio.NewReader(file)
+	batch := make([]map[string]interface{}, 0, batchSize)
 	for {
-		line, err := reader.ReadString('\n')
+		line, readErr := reader.ReadString('\n')
 		if line != "" {
-			msg := map[string]interface{}{
-				"type": "log",
-				"data": map[string]interface{}{
-					"line":      line,
-					"timestamp": time.Now().Format(time.RFC3339),
-					"level":     "info",
-				},
-			}
-			if writeErr := conn.WriteJSON(msg); writeErr != nil {
-				return
+			batch = append(batch, map[string]interface{}{
+				"line":      line,
+				"timestamp": time.Now().Format(time.RFC3339),
+				"level":     "info",
+			})
+
+			if len(batch) >= batchSize {
+				if writeErr := sendLogBatch(conn, executionID, batch); writeErr != nil {
+					return
+				}
+				batch = batch[:0]
 			}
 		}
-		if err != nil {
+		if readErr != nil {
 			break
+		}
+	}
+	// Flush remaining lines
+	if len(batch) > 0 {
+		if writeErr := sendLogBatch(conn, executionID, batch); writeErr != nil {
+			return
 		}
 	}
 

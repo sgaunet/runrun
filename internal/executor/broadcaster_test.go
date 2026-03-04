@@ -44,6 +44,9 @@ func (m *mockBroadcaster) BroadcastComplete(executionID, status string) {
 	m.complete = append(m.complete, completeCall{executionID: executionID, status: status})
 }
 
+func (m *mockBroadcaster) EnableBuffering(_ string) {}
+func (m *mockBroadcaster) FlushBuffer(_ string)     {}
+
 func (m *mockBroadcaster) getLogs() []broadcastCall {
 	m.mu.Lock()
 	defer m.mu.Unlock()

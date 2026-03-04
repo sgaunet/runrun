@@ -29,6 +29,8 @@ const (
 	MessageTypeUnsubscribed MessageType = "unsubscribed"
 	// MessageTypeComplete is sent by server when an execution completes
 	MessageTypeComplete MessageType = "complete"
+	// MessageTypeLogBatch is sent by server with multiple log lines batched together
+	MessageTypeLogBatch MessageType = "log_batch"
 )
 
 // Message represents a WebSocket message
@@ -46,6 +48,16 @@ type LogData struct {
 	Timestamp time.Time `json:"timestamp"`
 	Level     string    `json:"level,omitempty"`
 }
+
+// OverflowMode defines the strategy when a stream buffer is full
+type OverflowMode int
+
+const (
+	// OverflowDropOldest drops the oldest buffered lines when full
+	OverflowDropOldest OverflowMode = iota
+	// OverflowBlock blocks the writer until buffer space is available
+	OverflowBlock
+)
 
 // Client represents a WebSocket client connection
 type Client struct {
@@ -140,6 +152,21 @@ type Config struct {
 
 	// MaxConnectionsPerExecution limits concurrent connections per execution ID
 	MaxConnectionsPerExecution int
+
+	// StreamBufferMaxLines is the maximum number of log lines to buffer before flushing
+	StreamBufferMaxLines int
+
+	// StreamBufferMaxBytes is the maximum total bytes to buffer before flushing
+	StreamBufferMaxBytes int
+
+	// StreamBufferFlushInterval is the maximum time between buffer flushes
+	StreamBufferFlushInterval time.Duration
+
+	// StreamBufferOverflowMode defines what happens when the buffer is full
+	StreamBufferOverflowMode OverflowMode
+
+	// FileStreamBatchSize is the number of lines to read from log files per batch
+	FileStreamBatchSize int
 }
 
 // DefaultConfig returns the default WebSocket configuration
@@ -156,5 +183,10 @@ func DefaultConfig() *Config {
 		MaxSubscriptionsPerClient:  10,
 		IdleTimeout:                5 * time.Minute,
 		MaxConnectionsPerExecution: 10,
+		StreamBufferMaxLines:       50,
+		StreamBufferMaxBytes:       1024 * 1024, // 1 MB
+		StreamBufferFlushInterval:  100 * time.Millisecond,
+		StreamBufferOverflowMode:   OverflowDropOldest,
+		FileStreamBatchSize:        100,
 	}
 }

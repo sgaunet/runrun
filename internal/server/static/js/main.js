@@ -46,6 +46,13 @@ class LogStream {
                     this.onLog(message.data);
                 }
                 break;
+            case 'log_batch':
+                if (this.onLog && Array.isArray(message.data)) {
+                    for (const entry of message.data) {
+                        this.onLog(entry);
+                    }
+                }
+                break;
             case 'subscribed':
                 console.log('Subscribed to execution:', message.execution_id);
                 if (this.onStatus) {

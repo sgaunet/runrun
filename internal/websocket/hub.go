@@ -254,6 +254,11 @@ func (h *Hub) GetConnectionCount(executionID string) int {
 	return h.executionConnCounts[executionID]
 }
 
+// GetConfig returns the hub's configuration
+func (h *Hub) GetConfig() *Config {
+	return h.config
+}
+
 // Shutdown gracefully shuts down the hub
 func (h *Hub) Shutdown() {
 	h.ClientsMu.Lock()

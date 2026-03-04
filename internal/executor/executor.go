@@ -121,6 +121,11 @@ func (e *TaskExecutor) executeTask(req *TaskRequest) {
 	e.updateExecutionStatus(executionID, StatusRunning)
 	e.setExecutionStartTime(executionID, time.Now())
 
+	// Enable buffered streaming for this execution
+	if e.broadcaster != nil {
+		e.broadcaster.EnableBuffering(executionID)
+	}
+
 	// Broadcast execution start
 	if e.broadcaster != nil {
 		e.broadcaster.BroadcastLogWithLevel(executionID,

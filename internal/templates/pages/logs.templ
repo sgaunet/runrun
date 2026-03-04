@@ -103,7 +103,11 @@ script logsScript(executionID string) {
 			ws.onmessage = (event) => {
 				try {
 					const message = JSON.parse(event.data);
-					if (message.type === 'log' && message.data) {
+					if (message.type === 'metadata' && message.data) {
+						if (message.data.total_lines != null) {
+							logViewer.setTotalLines(message.data.total_lines);
+						}
+					} else if (message.type === 'log' && message.data) {
 						logViewer.addLine(message.data.line, {
 							timestamp: new Date(message.data.timestamp),
 							level: message.data.level

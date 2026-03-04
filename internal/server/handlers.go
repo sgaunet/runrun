@@ -35,6 +35,23 @@ func writeWSJSON(conn *websocket.Conn, v any) {
 	}
 }
 
+// countFileLines counts the number of lines in a file efficiently.
+func countFileLines(filePath string) (int, error) {
+	f, err := os.Open(filePath)
+	if err != nil {
+		return 0, err
+	}
+	defer f.Close()
+
+	count := 0
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	for scanner.Scan() {
+		count++
+	}
+	return count, scanner.Err()
+}
+
 // sendLogBatch sends a batch of log lines as a single WebSocket message.
 // For single-line batches, sends as a regular "log" message for backward compatibility.
 func sendLogBatch(conn *websocket.Conn, executionID string, batch []map[string]interface{}) error {
@@ -727,6 +744,9 @@ func (s *Server) wsLogsFromFile(conn *websocket.Conn, r *http.Request, execution
 		return
 	}
 
+	// Count total lines first for metadata
+	totalLines, countErr := countFileLines(execution.LogFilePath)
+
 	// Open and stream the log file
 	file, err := os.Open(execution.LogFilePath)
 	if err != nil {
@@ -739,6 +759,18 @@ func (s *Server) wsLogsFromFile(conn *websocket.Conn, r *http.Request, execution
 		return
 	}
 	defer file.Close()
+
+	// Send metadata with total line count if available
+	if countErr == nil {
+		writeWSJSON(conn, map[string]interface{}{
+			"type":         "metadata",
+			"execution_id": executionID,
+			"data": map[string]interface{}{
+				"total_lines": totalLines,
+			},
+			"timestamp": time.Now().Format(time.RFC3339),
+		})
+	}
 
 	// Channel to detect client disconnect
 	done := make(chan struct{})

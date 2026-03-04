@@ -53,6 +53,11 @@ class LogStream {
                     }
                 }
                 break;
+            case 'metadata':
+                if (this.onMetadata) {
+                    this.onMetadata(message.data);
+                }
+                break;
             case 'subscribed':
                 console.log('Subscribed to execution:', message.execution_id);
                 if (this.onStatus) {

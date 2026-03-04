@@ -31,6 +31,8 @@ const (
 	MessageTypeComplete MessageType = "complete"
 	// MessageTypeLogBatch is sent by server with multiple log lines batched together
 	MessageTypeLogBatch MessageType = "log_batch"
+	// MessageTypeMetadata is sent by server with stream metadata (e.g., total line count)
+	MessageTypeMetadata MessageType = "metadata"
 )
 
 // Message represents a WebSocket message
@@ -47,6 +49,11 @@ type LogData struct {
 	Line      string    `json:"line"`
 	Timestamp time.Time `json:"timestamp"`
 	Level     string    `json:"level,omitempty"`
+}
+
+// StreamMetadata contains metadata about a log stream
+type StreamMetadata struct {
+	TotalLines int `json:"total_lines,omitempty"`
 }
 
 // OverflowMode defines the strategy when a stream buffer is full

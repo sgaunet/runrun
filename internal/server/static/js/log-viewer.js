@@ -20,6 +20,7 @@ class LogViewer {
         this.searchTerm = '';
         this.autoScrollEnabled = this.options.autoScroll;
         this.userHasScrolled = false;
+        this.totalLines = null; // Total lines from server metadata (null = unknown)
         this.ansiUp = new AnsiUp();
         this.ansiUp.use_classes = true;
 
@@ -208,13 +209,30 @@ class LogViewer {
         this.updateLineCount();
     }
 
+    setTotalLines(total) {
+        this.totalLines = total;
+        this.updateLineCount();
+    }
+
     updateLineCount() {
         const el = document.getElementById('lineCount');
         if (!el) return;
-        if (this.filteredLines.length !== this.lines.length) {
-            el.textContent = `${this.filteredLines.length} / ${this.lines.length}`;
+
+        const received = this.lines.length;
+        const shown = this.filteredLines.length;
+        const total = this.totalLines;
+
+        if (total !== null && shown !== received) {
+            // Filtered view with known total: "shown / received of total"
+            el.textContent = `${shown} / ${received} of ${total}`;
+        } else if (total !== null) {
+            // Known total: "received / total"
+            el.textContent = `${received} / ${total}`;
+        } else if (shown !== received) {
+            // Filtered view, unknown total: "shown / received"
+            el.textContent = `${shown} / ${received}`;
         } else {
-            el.textContent = `${this.lines.length}`;
+            el.textContent = `${received}`;
         }
     }
 

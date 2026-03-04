@@ -20,10 +20,10 @@ type Limiter struct {
 
 // Visitor tracks request counts for an IP address
 type Visitor struct {
-	count      int
-	lastSeen   time.Time
-	resetTime  time.Time
-	mu         sync.Mutex
+	count     int
+	lastSeen  time.Time
+	resetTime time.Time
+	mu        sync.Mutex
 }
 
 // NewLimiter creates a new rate limiter

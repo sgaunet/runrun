@@ -211,11 +211,9 @@ func TestSubmitTask_QueueFull(t *testing.T) {
 
 	// Fill the queue (capacity is maxWorkers*2 = 2)
 	// Submit tasks rapidly to fill the queue before worker can process them
-	var ids []string
 	var errs []error
 	for i := 0; i < 4; i++ {
-		id, err := executor.SubmitTask(longTask)
-		ids = append(ids, id)
+		_, err := executor.SubmitTask(longTask)
 		errs = append(errs, err)
 	}
 
@@ -465,11 +463,11 @@ func TestTaskExecutionTiming(t *testing.T) {
 func TestReadLogFile_Success(t *testing.T) {
 	logDir := t.TempDir()
 	logFile := filepath.Join(logDir, "test.log")
-	
+
 	content := "test log content\nline 2\nline 3"
 	err := os.WriteFile(logFile, []byte(content), 0644)
 	require.NoError(t, err)
-	
+
 	result, err := ReadLogFile(logFile)
 	require.NoError(t, err)
 	assert.Equal(t, content, string(result))
@@ -489,7 +487,7 @@ func TestReadLogFile_NonExistent(t *testing.T) {
 
 func TestListTaskLogs_NoDirectory(t *testing.T) {
 	logDir := t.TempDir()
-	
+
 	logs, err := ListTaskLogs(logDir, "nonexistent-task")
 	require.NoError(t, err)
 	assert.Empty(t, logs)
@@ -500,7 +498,7 @@ func TestListTaskLogs_EmptyDirectory(t *testing.T) {
 	taskDir := filepath.Join(logDir, "test-task")
 	err := os.MkdirAll(taskDir, 0755)
 	require.NoError(t, err)
-	
+
 	logs, err := ListTaskLogs(logDir, "test-task")
 	require.NoError(t, err)
 	assert.Empty(t, logs)
@@ -511,26 +509,26 @@ func TestListTaskLogs_WithLogs(t *testing.T) {
 	taskDir := filepath.Join(logDir, "test-task")
 	err := os.MkdirAll(taskDir, 0755)
 	require.NoError(t, err)
-	
+
 	// Create multiple log files
 	log1 := filepath.Join(taskDir, "exec1.log")
 	log2 := filepath.Join(taskDir, "exec2.log")
 	log3 := filepath.Join(taskDir, "exec3.log")
-	
+
 	time.Sleep(10 * time.Millisecond)
 	os.WriteFile(log1, []byte("log1"), 0644)
 	time.Sleep(10 * time.Millisecond)
 	os.WriteFile(log2, []byte("log2"), 0644)
 	time.Sleep(10 * time.Millisecond)
 	os.WriteFile(log3, []byte("log3"), 0644)
-	
+
 	// Create a non-log file (should be ignored)
 	os.WriteFile(filepath.Join(taskDir, "other.txt"), []byte("other"), 0644)
-	
+
 	logs, err := ListTaskLogs(logDir, "test-task")
 	require.NoError(t, err)
 	assert.Len(t, logs, 3)
-	
+
 	// Should be sorted newest first
 	assert.Contains(t, logs[0], "exec3.log")
 }
@@ -540,11 +538,11 @@ func TestGetLogFilePath_Success(t *testing.T) {
 	taskDir := filepath.Join(logDir, "test-task")
 	err := os.MkdirAll(taskDir, 0755)
 	require.NoError(t, err)
-	
+
 	executionID := "abc12345-6789-0123-4567-890123456789"
 	logFile := filepath.Join(taskDir, "test-task_abc12345.log")
 	os.WriteFile(logFile, []byte("log"), 0644)
-	
+
 	path, err := GetLogFilePath(logDir, "test-task", executionID)
 	require.NoError(t, err)
 	assert.Equal(t, logFile, path)
@@ -552,7 +550,7 @@ func TestGetLogFilePath_Success(t *testing.T) {
 
 func TestGetLogFilePath_NoDirectory(t *testing.T) {
 	logDir := t.TempDir()
-	
+
 	_, err := GetLogFilePath(logDir, "nonexistent-task", "exec-123")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "no logs found for task")
@@ -563,7 +561,7 @@ func TestGetLogFilePath_NotFound(t *testing.T) {
 	taskDir := filepath.Join(logDir, "test-task")
 	err := os.MkdirAll(taskDir, 0755)
 	require.NoError(t, err)
-	
+
 	_, err = GetLogFilePath(logDir, "test-task", "nonexistent-exec")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "log file not found for execution")
@@ -572,11 +570,11 @@ func TestGetLogFilePath_NotFound(t *testing.T) {
 func TestTailLogFile_Success(t *testing.T) {
 	logDir := t.TempDir()
 	logFile := filepath.Join(logDir, "test.log")
-	
+
 	content := "line 1\nline 2\nline 3\nline 4\nline 5"
 	err := os.WriteFile(logFile, []byte(content), 0644)
 	require.NoError(t, err)
-	
+
 	lines, err := TailLogFile(logFile, 3)
 	require.NoError(t, err)
 	assert.Len(t, lines, 3)
@@ -588,11 +586,11 @@ func TestTailLogFile_Success(t *testing.T) {
 func TestTailLogFile_LessThanRequested(t *testing.T) {
 	logDir := t.TempDir()
 	logFile := filepath.Join(logDir, "test.log")
-	
+
 	content := "line 1\nline 2"
 	err := os.WriteFile(logFile, []byte(content), 0644)
 	require.NoError(t, err)
-	
+
 	lines, err := TailLogFile(logFile, 10)
 	require.NoError(t, err)
 	assert.Len(t, lines, 2)
@@ -609,7 +607,7 @@ func TestGetLatestExecution(t *testing.T) {
 	logDir := t.TempDir()
 	executor := NewTaskExecutor(2, logDir, 5*time.Second)
 	defer executor.Shutdown()
-	
+
 	// Add test executions
 	now := time.Now()
 	exec1 := &Execution{
@@ -630,11 +628,11 @@ func TestGetLatestExecution(t *testing.T) {
 		Status:    StatusSuccess,
 		StartedAt: now,
 	}
-	
+
 	executor.AddTestExecution("exec1", exec1)
 	executor.AddTestExecution("exec2", exec2)
 	executor.AddTestExecution("exec3", exec3)
-	
+
 	// Get latest for test-task
 	latest, err := executor.GetLatestExecution("test-task")
 	require.NoError(t, err)
@@ -645,7 +643,7 @@ func TestGetLatestExecution_NotFound(t *testing.T) {
 	logDir := t.TempDir()
 	executor := NewTaskExecutor(2, logDir, 5*time.Second)
 	defer executor.Shutdown()
-	
+
 	_, err := executor.GetLatestExecution("nonexistent-task")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "no executions found")
@@ -655,7 +653,7 @@ func TestGetStats(t *testing.T) {
 	logDir := t.TempDir()
 	executor := NewTaskExecutor(2, logDir, 5*time.Second)
 	defer executor.Shutdown()
-	
+
 	// Add test executions with different statuses
 	executor.AddTestExecution("exec1", &Execution{Status: StatusRunning})
 	executor.AddTestExecution("exec2", &Execution{Status: StatusSuccess})
@@ -663,7 +661,7 @@ func TestGetStats(t *testing.T) {
 	executor.AddTestExecution("exec4", &Execution{Status: StatusFailed})
 	executor.AddTestExecution("exec5", &Execution{Status: StatusQueued})
 	executor.AddTestExecution("exec6", &Execution{Status: StatusQueued})
-	
+
 	stats := executor.GetStats()
 	assert.Equal(t, 6, stats.Total)
 	assert.Equal(t, 1, stats.Running)
@@ -676,7 +674,7 @@ func TestGetStats_Empty(t *testing.T) {
 	logDir := t.TempDir()
 	executor := NewTaskExecutor(2, logDir, 5*time.Second)
 	defer executor.Shutdown()
-	
+
 	stats := executor.GetStats()
 	assert.Equal(t, 0, stats.Total)
 	assert.Equal(t, 0, stats.Running)
@@ -689,14 +687,14 @@ func TestGetTaskStatus_Success(t *testing.T) {
 	logDir := t.TempDir()
 	executor := NewTaskExecutor(2, logDir, 5*time.Second)
 	defer executor.Shutdown()
-	
+
 	now := time.Now()
 	executor.AddTestExecution("exec1", &Execution{
 		TaskName:  "test-task",
 		Status:    StatusSuccess,
 		StartedAt: now,
 	})
-	
+
 	status := executor.GetTaskStatus("test-task")
 	assert.Equal(t, "success", status)
 }
@@ -705,7 +703,7 @@ func TestGetTaskStatus_Idle(t *testing.T) {
 	logDir := t.TempDir()
 	executor := NewTaskExecutor(2, logDir, 5*time.Second)
 	defer executor.Shutdown()
-	
+
 	status := executor.GetTaskStatus("nonexistent-task")
 	assert.Equal(t, "idle", status)
 }
@@ -714,19 +712,161 @@ func TestAddTestExecution(t *testing.T) {
 	logDir := t.TempDir()
 	executor := NewTaskExecutor(2, logDir, 5*time.Second)
 	defer executor.Shutdown()
-	
+
 	exec := &Execution{
 		ID:       "test-exec",
 		TaskName: "test-task",
 		Status:   StatusSuccess,
 	}
-	
+
 	executor.AddTestExecution("test-exec", exec)
-	
+
 	// Verify it was added
 	retrieved, err := executor.GetExecution("test-exec")
 	require.NoError(t, err)
 	assert.Equal(t, exec.ID, retrieved.ID)
 	assert.Equal(t, exec.TaskName, retrieved.TaskName)
 	assert.Equal(t, exec.Status, retrieved.Status)
+}
+
+// Benchmark tests for critical paths
+
+func BenchmarkTaskSubmission(b *testing.B) {
+	logDir := b.TempDir()
+	executor := NewTaskExecutor(10, logDir, 5*time.Second)
+	defer executor.Shutdown()
+
+	task := &config.Task{
+		Name:    "bench-task",
+		Timeout: 10 * time.Second,
+		Steps: []config.Step{
+			{Name: "echo", Command: "echo 'benchmark'"},
+		},
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := executor.SubmitTask(task)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkTaskExecution(b *testing.B) {
+	logDir := b.TempDir()
+	executor := NewTaskExecutor(10, logDir, 5*time.Second)
+	defer executor.Shutdown()
+
+	task := &config.Task{
+		Name:    "bench-exec-task",
+		Timeout: 10 * time.Second,
+		Steps: []config.Step{
+			{Name: "echo", Command: "echo 'test'"},
+		},
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		executionID, err := executor.SubmitTask(task)
+		if err != nil {
+			b.Fatal(err)
+		}
+
+		// Wait for completion
+		for {
+			exec, err := executor.GetExecution(executionID)
+			if err != nil {
+				b.Fatal(err)
+			}
+			if exec.Status != StatusRunning && exec.Status != StatusQueued {
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+}
+
+func BenchmarkConcurrentTaskExecution(b *testing.B) {
+	logDir := b.TempDir()
+	executor := NewTaskExecutor(10, logDir, 5*time.Second)
+	defer executor.Shutdown()
+
+	task := &config.Task{
+		Name:    "bench-concurrent",
+		Timeout: 10 * time.Second,
+		Steps: []config.Step{
+			{Name: "echo", Command: "echo 'concurrent test'"},
+		},
+	}
+
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			executionID, err := executor.SubmitTask(task)
+			if err != nil {
+				b.Error(err)
+				continue
+			}
+
+			// Wait for completion
+			for {
+				exec, err := executor.GetExecution(executionID)
+				if err != nil {
+					b.Error(err)
+					break
+				}
+				if exec.Status != StatusRunning && exec.Status != StatusQueued {
+					break
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+		}
+	})
+}
+
+func BenchmarkGetExecution(b *testing.B) {
+	logDir := b.TempDir()
+	executor := NewTaskExecutor(2, logDir, 5*time.Second)
+	defer executor.Shutdown()
+
+	// Create test execution
+	exec := &Execution{
+		ID:       "bench-exec",
+		TaskName: "bench-task",
+		Status:   StatusSuccess,
+	}
+	executor.AddTestExecution("bench-exec", exec)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := executor.GetExecution("bench-exec")
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkListExecutions(b *testing.B) {
+	logDir := b.TempDir()
+	executor := NewTaskExecutor(2, logDir, 5*time.Second)
+	defer executor.Shutdown()
+
+	// Create multiple test executions
+	for i := 0; i < 100; i++ {
+		exec := &Execution{
+			ID:       "exec-" + string(rune(i)),
+			TaskName: "bench-task",
+			Status:   StatusSuccess,
+		}
+		executor.AddTestExecution(exec.ID, exec)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := executor.ListExecutions("bench-task")
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
 }

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/sgaunet/runrun/internal/ctxkeys"
 	apperrors "github.com/sgaunet/runrun/internal/errors"
 )
 
@@ -18,7 +19,7 @@ import (
 func RequestIDMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestID := uuid.New().String()
-		ctx := context.WithValue(r.Context(), "request_id", requestID)
+		ctx := context.WithValue(r.Context(), ctxkeys.RequestID, requestID)
 		w.Header().Set("X-Request-ID", requestID)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
@@ -94,7 +95,7 @@ func LoggingMiddleware(next http.Handler) http.Handler {
 
 		// Get request ID from context
 		requestID := ""
-		if rid := r.Context().Value("request_id"); rid != nil {
+		if rid := r.Context().Value(ctxkeys.RequestID); rid != nil {
 			if ridStr, ok := rid.(string); ok {
 				requestID = ridStr
 			}
@@ -134,10 +135,10 @@ func (rw *responseWriter) Flush() {
 
 // timeoutWriter wraps http.ResponseWriter to prevent concurrent writes
 type timeoutWriter struct {
-	w           http.ResponseWriter
-	mu          sync.Mutex
-	written     bool
-	timedOut    bool
+	w        http.ResponseWriter
+	mu       sync.Mutex
+	written  bool
+	timedOut bool
 }
 
 func (tw *timeoutWriter) Header() http.Header {

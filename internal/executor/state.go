@@ -184,12 +184,12 @@ func (e *TaskExecutor) GetLatestExecution(taskName string) (*Execution, error) {
 
 // TaskStats represents aggregated statistics for all tasks
 type TaskStats struct {
-	Total    int
-	Running  int
-	Success  int
-	Failed   int
-	Queued   int
-	Idle     int
+	Total   int
+	Running int
+	Success int
+	Failed  int
+	Queued  int
+	Idle    int
 }
 
 // GetStats returns aggregated statistics for all tasks

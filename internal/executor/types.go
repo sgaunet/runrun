@@ -58,8 +58,8 @@ type TaskRequest struct {
 // TaskExecutor manages task execution with worker pool
 type TaskExecutor struct {
 	// Configuration
-	maxWorkers     int
-	logDirectory   string
+	maxWorkers      int
+	logDirectory    string
 	shutdownTimeout time.Duration
 
 	// Task queue

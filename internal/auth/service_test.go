@@ -352,7 +352,7 @@ func TestValidateSession(t *testing.T) {
 
 			username, err := svc.ValidateSession(tt.token)
 
-				if tt.wantErr != nil {
+			if tt.wantErr != nil {
 				if err == nil {
 					t.Errorf("ValidateSession() error = nil, wantErr %v", tt.wantErr)
 					return
@@ -534,19 +534,19 @@ func TestRefreshTokenInvalid(t *testing.T) {
 	service := setupTestAuthService(t)
 
 	tests := []struct {
-		name     string
-		token    string
-		wantErr  bool
+		name    string
+		token   string
+		wantErr bool
 	}{
 		{
-			name:     "Invalid token",
-			token:    "invalid-token",
-			wantErr:  true,
+			name:    "Invalid token",
+			token:   "invalid-token",
+			wantErr: true,
 		},
 		{
-			name:     "Empty token",
-			token:    "",
-			wantErr:  true,
+			name:    "Empty token",
+			token:   "",
+			wantErr: true,
 		},
 	}
 
@@ -605,9 +605,9 @@ func TestClaimsValid(t *testing.T) {
 	now := time.Now().Unix()
 
 	tests := []struct {
-		name      string
-		claims    *Claims
-		wantErr   error
+		name    string
+		claims  *Claims
+		wantErr error
 	}{
 		{
 			name: "Valid claims",
@@ -690,4 +690,93 @@ func TestConcurrentSessionAccess(t *testing.T) {
 	}
 
 	// Test should not panic or deadlock
+}
+
+// Benchmark tests for critical authentication paths
+
+func BenchmarkGenerateToken(b *testing.B) {
+	service := NewService("test-secret-key-at-least-32-chars-long", 24*time.Hour)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := service.GenerateToken("testuser")
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkValidateToken(b *testing.B) {
+	service := NewService("test-secret-key-at-least-32-chars-long", 24*time.Hour)
+	token, _ := service.GenerateToken("testuser")
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := service.ValidateToken(token)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkAuthenticate(b *testing.B) {
+	service := NewService("test-secret-key-at-least-32-chars-long", 24*time.Hour)
+	hash, _ := HashPassword("testPassword123")
+	service.AddUser("testuser", hash)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := service.Authenticate("testuser", "testPassword123")
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkValidateSession(b *testing.B) {
+	service := NewService("test-secret-key-at-least-32-chars-long", 24*time.Hour)
+	hash, _ := HashPassword("testPassword123")
+	service.AddUser("testuser", hash)
+	token, _ := service.Authenticate("testuser", "testPassword123")
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := service.ValidateSession(token)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkConcurrentValidateSession(b *testing.B) {
+	service := NewService("test-secret-key-at-least-32-chars-long", 24*time.Hour)
+	hash, _ := HashPassword("testPassword123")
+	service.AddUser("testuser", hash)
+	token, _ := service.Authenticate("testuser", "testPassword123")
+
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			_, err := service.ValidateSession(token)
+			if err != nil {
+				b.Error(err)
+			}
+		}
+	})
+}
+
+func BenchmarkRefreshToken(b *testing.B) {
+	service := NewService("test-secret-key-at-least-32-chars-long", 24*time.Hour)
+	hash, _ := HashPassword("testPassword123")
+	service.AddUser("testuser", hash)
+	token, _ := service.Authenticate("testuser", "testPassword123")
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		newToken, err := service.RefreshToken(token)
+		if err != nil {
+			b.Fatal(err)
+		}
+		token = newToken
+	}
 }

@@ -22,6 +22,20 @@ import (
 	"github.com/sgaunet/runrun/internal/templates/pages"
 )
 
+// writeJSON encodes data as JSON to the response writer, logging any errors.
+func writeJSON(w http.ResponseWriter, data any) {
+	if err := json.NewEncoder(w).Encode(data); err != nil {
+		log.Printf("Failed to encode JSON response: %v", err)
+	}
+}
+
+// writeWSJSON writes a JSON message to a WebSocket connection, logging any errors.
+func writeWSJSON(conn *websocket.Conn, v any) {
+	if err := conn.WriteJSON(v); err != nil {
+		log.Printf("Failed to write WebSocket message: %v", err)
+	}
+}
+
 // HealthResponse represents the health check response
 type HealthResponse struct {
 	Status    string            `json:"status"`
@@ -43,7 +57,7 @@ func (s *Server) healthCheckHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(response)
+	writeJSON(w, response)
 }
 
 // readinessHandler handles readiness probe requests
@@ -92,7 +106,7 @@ func (s *Server) readinessHandler(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}
 
-	json.NewEncoder(w).Encode(response)
+	writeJSON(w, response)
 }
 
 // livenessHandler handles liveness probe requests
@@ -108,7 +122,7 @@ func (s *Server) livenessHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(response)
+	writeJSON(w, response)
 }
 
 // dashboardHandler serves the main dashboard page
@@ -258,7 +272,7 @@ func (s *Server) executeTaskHandler(w http.ResponseWriter, r *http.Request) {
 
 	if task == nil {
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		writeJSON(w, map[string]interface{}{
 			"success": false,
 			"message": fmt.Sprintf("Task '%s' not found", taskName),
 		})
@@ -269,7 +283,7 @@ func (s *Server) executeTaskHandler(w http.ResponseWriter, r *http.Request) {
 	executionID, err := s.executor.SubmitTask(task)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		writeJSON(w, map[string]interface{}{
 			"success": false,
 			"message": fmt.Sprintf("Failed to queue task: %v", err),
 		})
@@ -277,7 +291,7 @@ func (s *Server) executeTaskHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	writeJSON(w, map[string]interface{}{
 		"success":      true,
 		"message":      fmt.Sprintf("Task '%s' execution queued", taskName),
 		"execution_id": executionID,
@@ -322,15 +336,15 @@ func (s *Server) statusAPIHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	writeJSON(w, map[string]interface{}{
 		"tasks": tasks,
 		"stats": map[string]interface{}{
-			"total":       len(s.config.Tasks),
-			"running":     stats.Running,
-			"success":     stats.Success,
-			"failed":      stats.Failed,
-			"queued":      stats.Queued,
-			"executions":  stats.Total,
+			"total":      len(s.config.Tasks),
+			"running":    stats.Running,
+			"success":    stats.Success,
+			"failed":     stats.Failed,
+			"queued":     stats.Queued,
+			"executions": stats.Total,
 		},
 	})
 }
@@ -431,7 +445,9 @@ func (s *Server) downloadLogsHandler(w http.ResponseWriter, r *http.Request) {
 	filename := fmt.Sprintf("%s_%s.log", execution.TaskName, executionIDShort)
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filename))
-	w.Write(content)
+	if _, err := w.Write(content); err != nil {
+		log.Printf("Failed to write download response: %v", err)
+	}
 }
 
 // pollLogsHandler provides HTTP polling fallback for clients without WebSocket
@@ -448,7 +464,7 @@ func (s *Server) pollLogsHandler(w http.ResponseWriter, r *http.Request) {
 	// Determine how many lines to return (default: all, or tail N lines)
 	lines := 100 // Default tail lines
 	if linesParam := r.URL.Query().Get("lines"); linesParam != "" {
-		fmt.Sscanf(linesParam, "%d", &lines)
+		_, _ = fmt.Sscanf(linesParam, "%d", &lines)
 	}
 
 	var logLines []string
@@ -474,7 +490,7 @@ func (s *Server) pollLogsHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
-	json.NewEncoder(w).Encode(response)
+	writeJSON(w, response)
 }
 
 // upgrader configures the WebSocket protocol upgrade from HTTP
@@ -619,7 +635,7 @@ func (s *Server) wsLogsHandler(w http.ResponseWriter, r *http.Request) {
 					"level":     "info",
 				},
 			}
-			conn.WriteJSON(msg)
+			writeWSJSON(conn, msg)
 
 			// Keep connection open to prevent reconnect loop
 			// Wait for client to close or timeout
@@ -644,7 +660,7 @@ func (s *Server) wsLogsHandler(w http.ResponseWriter, r *http.Request) {
 					"level":     "info",
 				},
 			}
-			conn.WriteJSON(msg)
+			writeWSJSON(conn, msg)
 
 			// Poll for log file to be created (executor sets LogFilePath after task completes)
 			pollTicker := time.NewTicker(500 * time.Millisecond)
@@ -663,15 +679,15 @@ func (s *Server) wsLogsHandler(w http.ResponseWriter, r *http.Request) {
 							"level":     "warning",
 						},
 					}
-					conn.WriteJSON(timeoutMsg)
+					writeWSJSON(conn, timeoutMsg)
 					return
 				case <-r.Context().Done():
 					// Request cancelled
 					return
 				case <-pollTicker.C:
 					// Check if log file has been set
-					currentExec, err := s.executor.GetExecution(executionID)
-					if err != nil {
+					currentExec, pollErr := s.executor.GetExecution(executionID)
+					if pollErr != nil {
 						return
 					}
 					if currentExec.LogFilePath != "" {
@@ -689,7 +705,7 @@ func (s *Server) wsLogsHandler(w http.ResponseWriter, r *http.Request) {
 								"level":     "info",
 							},
 						}
-						conn.WriteJSON(msg)
+						writeWSJSON(conn, msg)
 						return
 					}
 				}
@@ -708,7 +724,7 @@ openLogFile:
 				"message": fmt.Sprintf("Failed to open log file: %v", err),
 			},
 		}
-		conn.WriteJSON(msg)
+		writeWSJSON(conn, msg)
 		return
 	}
 	defer file.Close()
@@ -762,7 +778,7 @@ openLogFile:
 									"level":     "info",
 								},
 							}
-							conn.WriteJSON(msg)
+							writeWSJSON(conn, msg)
 
 							// Keep connection open to prevent reconnect loop
 							// Wait for client to close or timeout
@@ -804,7 +820,6 @@ openLogFile:
 		}
 	}
 }
-
 
 // Templ-based handlers
 

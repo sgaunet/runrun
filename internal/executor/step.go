@@ -3,6 +3,7 @@ package executor
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -36,10 +37,8 @@ func (s *DefaultStepExecutor) ExecuteStep(ctx context.Context, step *config.Step
 
 	// Set environment variables
 	cmd.Env = os.Environ() // Start with system environment
-	if env != nil {
-		for key, value := range env {
-			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", key, value))
-		}
+	for key, value := range env {
+		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", key, value))
 	}
 
 	// Capture output
@@ -61,7 +60,8 @@ func (s *DefaultStepExecutor) ExecuteStep(ctx context.Context, step *config.Step
 
 	// Get exit code
 	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
+		exitErr := &exec.ExitError{}
+		if errors.As(err, &exitErr) {
 			stepExec.ExitCode = exitErr.ExitCode()
 		} else {
 			stepExec.ExitCode = -1
@@ -141,9 +141,13 @@ func WriteLogFile(execution *Execution, logDirectory string) error {
 
 		// Write step output
 		if len(step.Output) > 0 {
-			file.Write(step.Output)
+			if _, err := file.Write(step.Output); err != nil {
+				return fmt.Errorf("failed to write step output: %w", err)
+			}
 			if step.Output[len(step.Output)-1] != '\n' {
-				file.WriteString("\n")
+				if _, err := file.WriteString("\n"); err != nil {
+					return fmt.Errorf("failed to write newline: %w", err)
+				}
 			}
 		}
 

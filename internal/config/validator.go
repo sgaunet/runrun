@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -18,7 +19,8 @@ func validateConfig(config *Config) error {
 	err := validate.Struct(config)
 	if err != nil {
 		// Format validation errors into a readable message
-		if validationErrors, ok := err.(validator.ValidationErrors); ok {
+		var validationErrors validator.ValidationErrors
+		if errors.As(err, &validationErrors) {
 			return formatValidationErrors(validationErrors)
 		}
 		return fmt.Errorf("validation failed: %w", err)
@@ -46,7 +48,7 @@ func validateTaskNames(tasks []Task) error {
 
 // formatValidationErrors converts validator errors into user-friendly messages
 func formatValidationErrors(errs validator.ValidationErrors) error {
-	var messages []string
+	messages := make([]string, 0, len(errs))
 	for _, err := range errs {
 		var msg string
 		switch err.Tag() {

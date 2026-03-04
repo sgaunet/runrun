@@ -10,6 +10,9 @@ import (
 const (
 	// SessionCookieName is the name of the session cookie
 	SessionCookieName = "session"
+
+	// ContentTypeJSON is the MIME type for JSON content
+	ContentTypeJSON = "application/json"
 )
 
 // LoginRequest represents the login request payload
@@ -35,7 +38,7 @@ func (s *Service) LoginHandler(w http.ResponseWriter, r *http.Request) {
 	var req LoginRequest
 	contentType := r.Header.Get("Content-Type")
 
-	if contentType == "application/json" {
+	if contentType == ContentTypeJSON {
 		// Parse as JSON
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "Invalid JSON request", http.StatusBadRequest)
@@ -60,12 +63,14 @@ func (s *Service) LoginHandler(w http.ResponseWriter, r *http.Request) {
 		acceptHeader := r.Header.Get("Accept")
 
 		// If JSON was sent or JSON is explicitly requested, return JSON error
-		if contentType == "application/json" || acceptHeader == "application/json" {
+		if contentType == ContentTypeJSON || acceptHeader == ContentTypeJSON {
 			w.WriteHeader(http.StatusUnauthorized)
-			json.NewEncoder(w).Encode(LoginResponse{
+			if err := json.NewEncoder(w).Encode(LoginResponse{
 				Success: false,
 				Message: "Invalid username or password",
-			})
+			}); err != nil {
+				log.Printf("Failed to encode login response: %v", err)
+			}
 			return
 		}
 
@@ -91,12 +96,14 @@ func (s *Service) LoginHandler(w http.ResponseWriter, r *http.Request) {
 	acceptHeader := r.Header.Get("Accept")
 
 	// If JSON was sent or JSON is explicitly requested, return JSON
-	if contentType == "application/json" || acceptHeader == "application/json" {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(LoginResponse{
+	if contentType == ContentTypeJSON || acceptHeader == ContentTypeJSON {
+		w.Header().Set("Content-Type", ContentTypeJSON)
+		if err := json.NewEncoder(w).Encode(LoginResponse{
 			Success: true,
 			Message: "Login successful",
-		})
+		}); err != nil {
+			log.Printf("Failed to encode login response: %v", err)
+		}
 		return
 	}
 
@@ -136,12 +143,14 @@ func (s *Service) LogoutHandler(w http.ResponseWriter, r *http.Request) {
 	contentType := r.Header.Get("Content-Type")
 
 	// If JSON was sent or JSON is explicitly requested, return JSON
-	if contentType == "application/json" || acceptHeader == "application/json" {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(LoginResponse{
+	if contentType == ContentTypeJSON || acceptHeader == ContentTypeJSON {
+		w.Header().Set("Content-Type", ContentTypeJSON)
+		if err := json.NewEncoder(w).Encode(LoginResponse{
 			Success: true,
 			Message: "Logout successful",
-		})
+		}); err != nil {
+			log.Printf("Failed to encode logout response: %v", err)
+		}
 		return
 	}
 
@@ -162,6 +171,7 @@ func (s *Service) LoginPageHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Serve login page (will be implemented with templ later)
 	w.Header().Set("Content-Type", "text/html")
+	//nolint:errcheck // best-effort HTML write
 	w.Write([]byte(`
 <!DOCTYPE html>
 <html>

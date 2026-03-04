@@ -71,11 +71,11 @@ type Client struct {
 // Hub manages all active WebSocket connections
 type Hub struct {
 	// Clients is the set of registered clients
-	Clients map[*Client]bool
+	Clients   map[*Client]bool
 	ClientsMu sync.RWMutex
 
 	// Subscriptions maps execution IDs to subscribed clients
-	Subscriptions map[string]map[*Client]bool
+	Subscriptions   map[string]map[*Client]bool
 	SubscriptionsMu sync.RWMutex
 
 	// Register is the channel for client registration

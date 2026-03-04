@@ -7,10 +7,10 @@ import (
 
 // Service handles authentication operations
 type Service struct {
-	users         map[string]*User // username -> User
-	sessions      map[string]*Session // token -> Session
-	sessionsMutex sync.RWMutex
-	jwtSecret     string
+	users          map[string]*User    // username -> User
+	sessions       map[string]*Session // token -> Session
+	sessionsMutex  sync.RWMutex
+	jwtSecret      string
 	sessionTimeout time.Duration
 }
 
@@ -50,7 +50,7 @@ func (s *Service) Authenticate(username, password string) (string, error) {
 	}
 
 	// Verify password
-	if err := VerifyPassword(user.PasswordHash, password); err != nil {
+	if verifyErr := VerifyPassword(user.PasswordHash, password); verifyErr != nil {
 		return "", ErrInvalidCredentials
 	}
 

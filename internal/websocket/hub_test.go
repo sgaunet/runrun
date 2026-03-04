@@ -489,3 +489,135 @@ func TestNewHandler(t *testing.T) {
 	assert.Equal(t, hub, handler.Hub)
 	assert.Equal(t, config, handler.Config)
 }
+
+// Benchmark tests for WebSocket critical paths
+
+func BenchmarkHub_Subscribe(b *testing.B) {
+	hub := NewHub()
+	client := &Client{
+		ID:            "bench-client",
+		Hub:           hub,
+		Send:          make(chan []byte, 10),
+		Subscriptions: make(map[string]bool),
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		executionID := "exec-" + string(rune(i%100))
+		hub.Subscribe(client, executionID)
+	}
+}
+
+func BenchmarkHub_Unsubscribe(b *testing.B) {
+	hub := NewHub()
+	client := &Client{
+		ID:            "bench-client",
+		Hub:           hub,
+		Send:          make(chan []byte, 10),
+		Subscriptions: make(map[string]bool),
+	}
+
+	// Pre-subscribe to executions
+	for i := 0; i < b.N; i++ {
+		executionID := "exec-" + string(rune(i%100))
+		hub.Subscribe(client, executionID)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		executionID := "exec-" + string(rune(i%100))
+		hub.Unsubscribe(client, executionID)
+	}
+}
+
+func BenchmarkHub_GetSubscriberCount(b *testing.B) {
+	hub := NewHub()
+	client := &Client{
+		ID:            "bench-client",
+		Hub:           hub,
+		Send:          make(chan []byte, 10),
+		Subscriptions: make(map[string]bool),
+	}
+
+	executionID := "exec-count"
+	hub.Subscribe(client, executionID)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = hub.GetSubscriberCount(executionID)
+	}
+}
+
+func BenchmarkHub_BroadcastSingleClient(b *testing.B) {
+	hub := NewHub()
+	go hub.Run()
+
+	client := &Client{
+		ID:            "bench-client",
+		Hub:           hub,
+		Send:          make(chan []byte, 1000),
+		Subscriptions: make(map[string]bool),
+	}
+
+	executionID := "exec-broadcast"
+	hub.Subscribe(client, executionID)
+
+	testData := []byte("benchmark message")
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		hub.Broadcast <- &BroadcastMessage{
+			ExecutionID: executionID,
+			Data:        testData,
+		}
+	}
+}
+
+func BenchmarkHub_BroadcastMultipleClients(b *testing.B) {
+	hub := NewHub()
+	go hub.Run()
+
+	numClients := 10
+	clients := make([]*Client, numClients)
+	executionID := "exec-multi-broadcast"
+
+	for i := 0; i < numClients; i++ {
+		clients[i] = &Client{
+			ID:            "bench-client-" + string(rune('0'+i)),
+			Hub:           hub,
+			Send:          make(chan []byte, 1000),
+			Subscriptions: make(map[string]bool),
+		}
+		hub.Subscribe(clients[i], executionID)
+	}
+
+	testData := []byte("benchmark message")
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		hub.Broadcast <- &BroadcastMessage{
+			ExecutionID: executionID,
+			Data:        testData,
+		}
+	}
+}
+
+func BenchmarkHub_ConcurrentSubscribe(b *testing.B) {
+	hub := NewHub()
+	client := &Client{
+		ID:            "bench-client",
+		Hub:           hub,
+		Send:          make(chan []byte, 10),
+		Subscriptions: make(map[string]bool),
+	}
+
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		i := 0
+		for pb.Next() {
+			executionID := "exec-" + string(rune(i%100))
+			hub.Subscribe(client, executionID)
+			i++
+		}
+	})
+}

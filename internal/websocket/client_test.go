@@ -418,9 +418,9 @@ func TestClient_SendMessage_Success(t *testing.T) {
 	client := NewClient(hub, nil, "test-send-msg", config)
 
 	msg := Message{
-		Type:      MessageTypeSubscribed,
+		Type:        MessageTypeSubscribed,
 		ExecutionID: "test-exec",
-		Timestamp: time.Now(),
+		Timestamp:   time.Now(),
 	}
 
 	// Should not block or panic

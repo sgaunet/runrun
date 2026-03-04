@@ -22,53 +22,53 @@ func (s *Server) SetupRoutes() {
 		r.Group(func(r chi.Router) {
 			r.Get("/login", s.loginPageHandlerTempl)
 
-		// Apply rate limiting to login POST endpoint
-		r.Group(func(r chi.Router) {
-			r.Use(s.rateLimiter.Middleware)
-			r.Post("/login", s.authService.LoginHandler)
+			// Apply rate limiting to login POST endpoint
+			r.Group(func(r chi.Router) {
+				r.Use(s.rateLimiter.Middleware)
+				r.Post("/login", s.authService.LoginHandler)
+			})
+
+			r.Post("/logout", s.authService.LogoutHandler)
+
+			// Health check endpoints
+			r.Get("/health", s.healthCheckHandler)
+			r.Get("/health/ready", s.readinessHandler)
+			r.Get("/health/live", s.livenessHandler)
+
+			// Static assets
+			r.Handle("/static/*", http.StripPrefix("/static/", s.serveStaticFiles()))
 		})
 
-		r.Post("/logout", s.authService.LogoutHandler)
+		// Protected routes (authentication required)
+		r.Group(func(r chi.Router) {
+			// Apply authentication middleware
+			r.Use(s.authService.AuthMiddleware)
 
-		// Health check endpoints
-		r.Get("/health", s.healthCheckHandler)
-		r.Get("/health/ready", s.readinessHandler)
-		r.Get("/health/live", s.livenessHandler)
+			// Dashboard
+			r.Get("/", s.dashboardHandlerTempl)
 
-		// Static assets
-		r.Handle("/static/*", http.StripPrefix("/static/", s.serveStaticFiles()))
-	})
+			// Task routes
+			r.Route("/tasks", func(r chi.Router) {
+				r.Get("/{taskName}", s.taskDetailHandlerTempl)
 
-	// Protected routes (authentication required)
-	r.Group(func(r chi.Router) {
-		// Apply authentication middleware
-		r.Use(s.authService.AuthMiddleware)
+				// Apply CSRF protection to POST requests
+				r.Group(func(r chi.Router) {
+					r.Use(s.csrf.Middleware)
+					r.Post("/{taskName}/execute", s.executeTaskHandler)
+				})
+			})
 
-		// Dashboard
-		r.Get("/", s.dashboardHandlerTempl)
+			// API routes
+			r.Route("/api", func(r chi.Router) {
+				r.Get("/status", s.statusAPIHandler)
+			})
 
-		// Task routes
-		r.Route("/tasks", func(r chi.Router) {
-			r.Get("/{taskName}", s.taskDetailHandlerTempl)
-
-			// Apply CSRF protection to POST requests
-			r.Group(func(r chi.Router) {
-				r.Use(s.csrf.Middleware)
-				r.Post("/{taskName}/execute", s.executeTaskHandler)
+			// Log routes
+			r.Route("/logs", func(r chi.Router) {
+				r.Get("/{executionID}", s.viewLogsHandlerTempl)
+				r.Get("/{executionID}/download", s.downloadLogsHandler)
+				r.Get("/{executionID}/poll", s.pollLogsHandler)
 			})
 		})
-
-		// API routes
-		r.Route("/api", func(r chi.Router) {
-			r.Get("/status", s.statusAPIHandler)
-		})
-
-		// Log routes
-		r.Route("/logs", func(r chi.Router) {
-			r.Get("/{executionID}", s.viewLogsHandlerTempl)
-			r.Get("/{executionID}/download", s.downloadLogsHandler)
-			r.Get("/{executionID}/poll", s.pollLogsHandler)
-		})
-	})
 	})
 }

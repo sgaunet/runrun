@@ -16,7 +16,7 @@ var (
 )
 
 // expandEnvVars expands environment variables in the configuration
-func expandEnvVars(config *Config) error {
+func expandEnvVars(config *Config) {
 	// Expand server config
 	config.Server.LogDirectory = expandString(config.Server.LogDirectory)
 
@@ -47,7 +47,6 @@ func expandEnvVars(config *Config) error {
 		}
 	}
 
-	return nil
 }
 
 // expandString expands environment variables in a string

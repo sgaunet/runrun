@@ -5,37 +5,39 @@ import (
 	"log"
 	"net/http"
 	"time"
+
+	"github.com/sgaunet/runrun/internal/ctxkeys"
 )
 
 // EventType represents different types of security events
 type EventType string
 
 const (
-	EventLoginSuccess     EventType = "login_success"
-	EventLoginFailure     EventType = "login_failure"
-	EventLogout           EventType = "logout"
-	EventUnauthorized     EventType = "unauthorized_access"
-	EventRateLimitExceed  EventType = "rate_limit_exceeded"
-	EventCSRFViolation    EventType = "csrf_violation"
-	EventInvalidInput     EventType = "invalid_input"
-	EventPermissionDenied EventType = "permission_denied"
-	EventTaskExecution    EventType = "task_execution"
+	EventLoginSuccess       EventType = "login_success"
+	EventLoginFailure       EventType = "login_failure"
+	EventLogout             EventType = "logout"
+	EventUnauthorized       EventType = "unauthorized_access"
+	EventRateLimitExceed    EventType = "rate_limit_exceeded"
+	EventCSRFViolation      EventType = "csrf_violation"
+	EventInvalidInput       EventType = "invalid_input"
+	EventPermissionDenied   EventType = "permission_denied"
+	EventTaskExecution      EventType = "task_execution"
 	EventSuspiciousActivity EventType = "suspicious_activity"
 )
 
 // Event represents a security audit event
 type Event struct {
-	Timestamp   time.Time              `json:"timestamp"`
-	Type        EventType              `json:"type"`
-	Username    string                 `json:"username,omitempty"`
-	IP          string                 `json:"ip"`
-	UserAgent   string                 `json:"user_agent,omitempty"`
-	Path        string                 `json:"path"`
-	Method      string                 `json:"method"`
-	StatusCode  int                    `json:"status_code,omitempty"`
-	Message     string                 `json:"message"`
-	Details     map[string]interface{} `json:"details,omitempty"`
-	RequestID   string                 `json:"request_id,omitempty"`
+	Timestamp  time.Time              `json:"timestamp"`
+	Type       EventType              `json:"type"`
+	Username   string                 `json:"username,omitempty"`
+	IP         string                 `json:"ip"`
+	UserAgent  string                 `json:"user_agent,omitempty"`
+	Path       string                 `json:"path"`
+	Method     string                 `json:"method"`
+	StatusCode int                    `json:"status_code,omitempty"`
+	Message    string                 `json:"message"`
+	Details    map[string]interface{} `json:"details,omitempty"`
+	RequestID  string                 `json:"request_id,omitempty"`
 }
 
 // Logger handles security event logging
@@ -79,23 +81,23 @@ func (l *Logger) LogFromRequest(r *http.Request, eventType EventType, message st
 
 	// Get request ID from context
 	requestID := ""
-	if ridCtx := r.Context().Value("request_id"); ridCtx != nil {
+	if ridCtx := r.Context().Value(ctxkeys.RequestID); ridCtx != nil {
 		if rid, ok := ridCtx.(string); ok {
 			requestID = rid
 		}
 	}
 
 	event := Event{
-		Timestamp:  time.Now(),
-		Type:       eventType,
-		Username:   username,
-		IP:         getClientIP(r),
-		UserAgent:  r.UserAgent(),
-		Path:       r.URL.Path,
-		Method:     r.Method,
-		Message:    message,
-		Details:    details,
-		RequestID:  requestID,
+		Timestamp: time.Now(),
+		Type:      eventType,
+		Username:  username,
+		IP:        getClientIP(r),
+		UserAgent: r.UserAgent(),
+		Path:      r.URL.Path,
+		Method:    r.Method,
+		Message:   message,
+		Details:   details,
+		RequestID: requestID,
 	}
 
 	l.Log(event)

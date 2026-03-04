@@ -2,10 +2,13 @@ package errors
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"runtime/debug"
+
+	"github.com/sgaunet/runrun/internal/ctxkeys"
 )
 
 // AppError represents an application error with HTTP context
@@ -36,7 +39,7 @@ type ErrorResponse struct {
 	Code      int    `json:"code"`
 }
 
-// Common error constructors
+// BadRequest creates a 400 Bad Request error.
 func BadRequest(message string, err error) *AppError {
 	return &AppError{
 		Code:    http.StatusBadRequest,
@@ -93,16 +96,15 @@ func ServiceUnavailable(message string, err error) *AppError {
 // HandleError sends a properly formatted error response to the client
 func HandleError(w http.ResponseWriter, r *http.Request, err error) {
 	var appErr *AppError
-	var ok bool
 
 	// Check if it's already an AppError
-	if appErr, ok = err.(*AppError); !ok {
+	if !errors.As(err, &appErr) {
 		// Not an AppError, wrap it as internal server error
 		appErr = InternalError("An unexpected error occurred", err)
 	}
 
 	// Get request ID from context if available
-	requestID := r.Context().Value("request_id")
+	requestID := r.Context().Value(ctxkeys.RequestID)
 	if requestID != nil {
 		if rid, ok := requestID.(string); ok {
 			appErr.RequestID = rid

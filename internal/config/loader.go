@@ -16,9 +16,7 @@ func LoadConfig(filepath string) (*Config, error) {
 	}
 
 	// Expand environment variables
-	if err := expandEnvVars(config); err != nil {
-		return nil, fmt.Errorf("failed to expand environment variables: %w", err)
-	}
+	expandEnvVars(config)
 
 	// Validate configuration
 	if err := validateConfig(config); err != nil {

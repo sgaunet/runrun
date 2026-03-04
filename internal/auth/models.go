@@ -35,8 +35,8 @@ func (s *Session) IsExpired() bool {
 
 // Claims represents JWT token claims
 type Claims struct {
-	Username string `json:"username"`
-	IssuedAt int64  `json:"iat"`
+	Username  string `json:"username"`
+	IssuedAt  int64  `json:"iat"`
 	ExpiresAt int64  `json:"exp"`
 }
 

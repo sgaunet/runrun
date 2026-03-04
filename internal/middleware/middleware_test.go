@@ -8,13 +8,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sgaunet/runrun/internal/ctxkeys"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestRequestIDMiddleware(t *testing.T) {
 	handler := RequestIDMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Verify request ID is in context
-		requestID := r.Context().Value("request_id")
+		requestID := r.Context().Value(ctxkeys.RequestID)
 		assert.NotNil(t, requestID)
 
 		requestIDStr, ok := requestID.(string)
@@ -42,7 +43,7 @@ func TestRequestIDMiddleware_UniqueIDs(t *testing.T) {
 	requestIDs := make(map[string]bool)
 
 	handler := RequestIDMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requestID := r.Context().Value("request_id").(string)
+		requestID := r.Context().Value(ctxkeys.RequestID).(string)
 		requestIDs[requestID] = true
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -162,7 +163,7 @@ func TestLoggingMiddleware(t *testing.T) {
 	}))
 
 	req := httptest.NewRequest(http.MethodGet, "/test", nil)
-	req = req.WithContext(context.WithValue(req.Context(), "request_id", "test-request-id"))
+	req = req.WithContext(context.WithValue(req.Context(), ctxkeys.RequestID, "test-request-id"))
 	w := httptest.NewRecorder()
 
 	handler.ServeHTTP(w, req)
@@ -321,7 +322,7 @@ func TestMiddlewareChain(t *testing.T) {
 	// Test multiple middleware together
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Verify request ID is present
-		requestID := r.Context().Value("request_id")
+		requestID := r.Context().Value(ctxkeys.RequestID)
 		assert.NotNil(t, requestID)
 
 		w.WriteHeader(http.StatusOK)
@@ -497,7 +498,7 @@ func TestRequestIDMiddleware_Integration(t *testing.T) {
 	handler := RequestIDMiddleware(
 		LoggingMiddleware(
 			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				requestID := r.Context().Value("request_id")
+				requestID := r.Context().Value(ctxkeys.RequestID)
 				if rid, ok := requestID.(string); ok {
 					capturedRequestID = rid
 				}
@@ -540,7 +541,7 @@ func TestLoggingMiddleware_WithRequestIDInvalid(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/test", nil)
 	// Set invalid type for request_id
-	req = req.WithContext(context.WithValue(req.Context(), "request_id", 12345))
+	req = req.WithContext(context.WithValue(req.Context(), ctxkeys.RequestID, 12345))
 	w := httptest.NewRecorder()
 
 	// Should not panic with invalid type

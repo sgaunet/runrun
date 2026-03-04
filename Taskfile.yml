@@ -1,72 +1,105 @@
+# https://taskfile.dev
 version: '3'
+includes:
+  dev: ./Taskfile_dev.yml
+
+vars:
+  BINFILE: runrun
 
 tasks:
   default:
     desc: "List available tasks"
+    preconditions:
+      - test -f .git/hooks/pre-commit
     cmds:
       - task -a
+
+  check-before-commit:
+    desc: "Run checks before committing"
+    preconditions:
+      - test -f .git/hooks/pre-commit
+    deps:
+      - test
+      - snapshot
+    cmds:
+      - task: lint
 
   install-tools:
     desc: "Install development tools"
     cmds:
-      - echo "Installing development tools..."
       - go install github.com/a-h/templ/cmd/templ@latest
-      - echo "Tools installed successfully"
 
   generate:
     desc: "Generate templ templates"
     cmds:
-      - echo "Generating templ templates..."
       - templ generate
-      - echo "Template generation complete"
 
   build-css:
     desc: "Build CSS with Tailwind"
     cmds:
-      - echo "Building CSS with Tailwind..."
       - ./tools/tailwindcss -i internal/server/static/css/input.css -o internal/server/static/css/styles.css --minify
-      - echo "CSS build complete"
 
   build-all:
     desc: "Build all assets (CSS and application)"
-    deps: ["generate", build-css, build]
-    cmds:
-      - echo "All assets built successfully"
+    deps: [generate, build-css, build]
 
   watch-css:
     desc: "Watch CSS changes (development)"
     cmds:
-      - echo "Watching CSS changes..."
       - ./tools/tailwindcss -i internal/server/static/css/input.css -o internal/server/static/css/styles.css --watch
+
+  lint:
+    desc: "Run golangci-lint"
+    cmds:
+      - golangci-lint run
+
+  test:
+    desc: "Run unit tests with race detection"
+    cmds:
+      - go test -count=2 -race ./...
 
   build:
     desc: "Build the application"
     deps: [generate, build-css]
     cmds:
-      - echo "Building runrun..."
-      - go build -o runrun ./cmd/runrun
+      - CGO_ENABLED=0 go build -o {{.BINFILE}} ./cmd/runrun
 
-  test:
-    desc: "Run tests"
+  image:
+    desc: "Build and push Docker image"
+    deps:
+      - build
     cmds:
-      - echo "Running tests..."
-      - go test -v ./...
+      - docker build --no-cache --build-arg VERSION=development . -t ghcr.io/sgaunet/runrun:latest
+      - docker push ghcr.io/sgaunet/runrun:latest
 
   run:
     desc: "Run the server (development mode)"
     deps: [generate]
     cmds:
-      - echo "Starting runrun server..."
       - go run ./cmd/runrun server --config configs/example.yaml
+
+  doc:
+    desc: "Start godoc documentation server"
+    cmds:
+      - echo http://localhost:6060
+      - godoc -http=:6060
+
+  snapshot:
+    desc: "Create snapshot release with goreleaser"
+    cmds:
+      - goreleaser --clean --snapshot
+
+  release:
+    desc: "Create production release with goreleaser"
+    cmds:
+      - goreleaser --clean
 
   clean:
     desc: "Clean build artifacts"
     cmds:
-      - echo "Cleaning build artifacts..."
-      - rm -f runrun
+      - rm -f {{.BINFILE}}
       - rm -f internal/server/static/css/styles.css
       - find . -name "*_templ.go" -type f -delete
-      - echo "Clean complete"
 
   hash-password:
     desc: "Hash a password for configuration (usage: task hash-password PASS=yourpassword)"
@@ -77,9 +110,3 @@ tasks:
           exit 1
         fi
         ./runrun hash-password {{.PASS}}
-
-  watch:
-    desc: "Watch mode for development (requires templ CLI)"
-    cmds:
-      - echo "Starting watch mode..."
-      - templ generate --watch --proxy="http://localhost:8080" --cmd="go run ./cmd/runrun server --config configs/example.yaml"

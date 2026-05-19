@@ -30,7 +30,7 @@ templ taskDetailContent(data TaskDetailPageData) {
 				}
 			</div>
 			<div class="flex flex-col items-end gap-2">
-				<button onclick="runTask()" class="btn btn-primary whitespace-nowrap">Run Task</button>
+				<button onclick="runTask(event)" class="btn btn-primary whitespace-nowrap">Run Task</button>
 				<!-- Inline message container -->
 				<div id="task-message" class="hidden p-3 rounded-lg text-sm max-w-md"></div>
 			</div>
@@ -109,8 +109,8 @@ script taskScript(taskName string, csrfToken string) {
 		}
 	}
 
-	window.runTask = function() {
-		const btn = event.target;
+	window.runTask = function(e) {
+		const btn = e.target;
 		const messageDiv = document.getElementById('task-message');
 
 		// Hide any previous message

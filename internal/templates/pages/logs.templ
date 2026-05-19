@@ -33,41 +33,17 @@ templ logsContent(data LogsPageData) {
 				</div>
 			</div>
 		</div>
-		<!-- Action Buttons -->
-		<div class="mb-4">
-			<div class="flex gap-2 mb-2">
-				<button onclick="copyLogs()" class="btn btn-secondary text-sm">
-					<svg class="w-4 h-4 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
-					</svg>
-					Copy Logs
-				</button>
-				<a href={ templ.URL("/logs/" + data.ExecutionID + "/download") } class="btn btn-secondary text-sm">
-					<svg class="w-4 h-4 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
-					</svg>
-					Download
-				</a>
-				<button onclick="toggleAutoScroll()" id="autoScrollBtn" class="btn btn-secondary text-sm">
-					<svg class="w-4 h-4 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 13l-7 7-7-7m14-8l-7 7-7-7"></path>
-					</svg>
-					Auto-scroll: ON
-				</button>
-			</div>
-			<!-- Clipboard feedback message -->
-			<div id="clipboard-message" class="hidden p-2 rounded text-sm"></div>
-		</div>
 		<div id="logViewerContainer"></div>
 	</div>
 	<script type="module" src="/static/js/vendor/ansi_up_loader.js"></script>
 	<script src="/static/js/log-viewer.js"></script>
-	@logsScript(data.ExecutionID)
+	@logsScript(data.ExecutionID, data.Status)
 }
 
 // logsScript generates the logs viewer JavaScript with execution ID
-script logsScript(executionID string) {
+script logsScript(executionID string, executionStatus string) {
 	const EXECUTION_ID = executionID;
+	const EXECUTION_STATUS = executionStatus;
 
 	// Wait for AnsiUp to be loaded by the module before initializing
 	function initLogViewer() {
@@ -86,14 +62,22 @@ script logsScript(executionID string) {
 
 		// Connect to WebSocket for real-time logs
 		const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-		const wsUrl = `${protocol}//${window.location.host}/logs/ws/${EXECUTION_ID}`;
+		const wsBaseUrl = `${protocol}//${window.location.host}/logs/ws/${EXECUTION_ID}`;
+		let serverLevelFilter = ''; // Server-side level filter (query param)
+
+		function buildWsUrl() {
+			if (serverLevelFilter && serverLevelFilter !== 'all') {
+				return `${wsBaseUrl}?level=${encodeURIComponent(serverLevelFilter)}`;
+			}
+			return wsBaseUrl;
+		}
 
 		let ws = null;
 		let reconnectAttempts = 0;
 		const maxReconnectAttempts = 5;
 
 		function connectWebSocket() {
-			ws = new WebSocket(wsUrl);
+			ws = new WebSocket(buildWsUrl());
 
 			ws.onopen = () => {
 				console.log('WebSocket connected');
@@ -176,60 +160,14 @@ script logsScript(executionID string) {
 			}, 3000);
 		}
 
-		// Show clipboard feedback message
-		function showClipboardMessage(message, isSuccess) {
-			const messageDiv = document.getElementById('clipboard-message');
-			if (messageDiv) {
-				messageDiv.textContent = message;
-				messageDiv.classList.remove('hidden', 'bg-red-50', 'text-red-700', 'bg-blue-50', 'text-blue-700');
+		// Determine if execution is completed (use pagination) or running (use WebSocket)
+		const isCompleted = EXECUTION_STATUS === 'success' || EXECUTION_STATUS === 'failed' || EXECUTION_STATUS === 'cancelled';
 
-				if (isSuccess) {
-					messageDiv.classList.add('bg-blue-50', 'text-blue-700');
-				} else {
-					messageDiv.classList.add('bg-red-50', 'text-red-700');
-				}
-
-				// Auto-hide after 3 seconds
-				setTimeout(() => {
-					messageDiv.classList.add('hidden');
-				}, 3000);
-			}
+		if (isCompleted) {
+			logViewer.enablePagination(EXECUTION_ID);
+		} else {
+			connectWebSocket();
 		}
-
-		// Copy logs to clipboard
-		window.copyLogs = function() {
-			const logsText = logViewer.getAllLinesAsText();
-			if (!logsText) {
-				showClipboardMessage('No logs to copy', false);
-				return;
-			}
-
-			navigator.clipboard.writeText(logsText)
-				.then(() => {
-					const btn = event.target.closest('button');
-					const originalText = btn.innerHTML;
-					btn.innerHTML = '<svg class="w-4 h-4 inline mr-1" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"></path></svg>Copied!';
-					setTimeout(() => {
-						btn.innerHTML = originalText;
-					}, 2000);
-				})
-				.catch(err => {
-					console.error('Failed to copy logs:', err);
-					showClipboardMessage('Failed to copy logs to clipboard', false);
-				});
-		}
-
-		// Toggle auto-scroll
-		window.toggleAutoScroll = function() {
-			logViewer.options.autoScroll = !logViewer.options.autoScroll;
-			const btn = document.getElementById('autoScrollBtn');
-			btn.innerHTML = logViewer.options.autoScroll
-				? '<svg class="w-4 h-4 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 13l-7 7-7-7m14-8l-7 7-7-7"></path></svg>Auto-scroll: ON'
-				: '<svg class="w-4 h-4 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 13l-7 7-7-7m14-8l-7 7-7-7"></path></svg>Auto-scroll: OFF';
-		}
-
-		// Start WebSocket connection
-		connectWebSocket();
 
 		// Cleanup on page unload
 		window.addEventListener('beforeunload', () => {

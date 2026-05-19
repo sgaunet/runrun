@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -95,6 +96,56 @@ func GetLogFilePath(logDirectory, taskName, executionID string) (string, error) 
 	}
 
 	return "", fmt.Errorf("log file not found for execution: %s", executionID)
+}
+
+// CountFileLines counts the number of lines in a file efficiently.
+func CountFileLines(filePath string) (int, error) {
+	f, err := os.Open(filePath)
+	if err != nil {
+		return 0, err
+	}
+	defer f.Close()
+
+	count := 0
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	for scanner.Scan() {
+		count++
+	}
+	return count, scanner.Err()
+}
+
+// ReadLogSegment reads a range of lines from a log file in a single pass.
+// startLine is 0-indexed. Returns the lines, total line count, and any error.
+func ReadLogSegment(logFilePath string, startLine, count int) ([]string, int, error) {
+	if startLine < 0 {
+		startLine = 0
+	}
+
+	f, err := os.Open(logFilePath)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to open log file: %w", err)
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+
+	lines := make([]string, 0, count)
+	lineNum := 0
+
+	for scanner.Scan() {
+		if lineNum >= startLine && len(lines) < count {
+			lines = append(lines, scanner.Text())
+		}
+		lineNum++
+	}
+
+	if err := scanner.Err(); err != nil {
+		return lines, lineNum, fmt.Errorf("error reading log file: %w", err)
+	}
+
+	return lines, lineNum, nil
 }
 
 // TailLogFile returns the last N lines from a log file

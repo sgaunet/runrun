@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.png" alt="RunRun Logo" width="400">
+</p>
+
 # RunRun
 
 **RunRun** is a web-based task execution platform written in Go that allows scheduling, executing, and monitoring shell command tasks through a modern web interface with real-time streaming updates.

@@ -109,9 +109,8 @@ func (s *Server) setupRouter() {
 	r.Use(customMiddleware.SecurityHeadersMiddleware) // Security headers
 	r.Use(customMiddleware.LoggingMiddleware)         // Custom logging
 	r.Use(middleware.RealIP)                          // Set RemoteAddr to real IP
-	// NOTE: Compression middleware is applied selectively in SetupRoutes
-	// because it wraps the response writer and breaks WebSocket upgrades
-	r.Use(customMiddleware.TimeoutMiddleware(60 * time.Second)) // Request timeout with custom handling
+	// NOTE: Compression and Timeout middleware are applied selectively in SetupRoutes
+	// because they wrap the response writer and break WebSocket upgrades (http.Hijacker)
 
 	s.router = r
 }

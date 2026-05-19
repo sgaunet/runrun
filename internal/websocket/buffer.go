@@ -175,9 +175,14 @@ func BroadcastBatch(hub *Hub, executionID string, batch []LogData) {
 			log.Printf("Error marshaling log message: %v", err)
 			return
 		}
+		level := batch[0].Level
+		if level == "" {
+			level = "info"
+		}
 		hub.Broadcast <- &BroadcastMessage{
 			ExecutionID: executionID,
 			Data:        data,
+			Level:       level,
 		}
 		return
 	}

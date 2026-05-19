@@ -84,6 +84,11 @@ type Client struct {
 	Subscriptions map[string]bool
 	SubscribeMu   sync.RWMutex
 
+	// LevelFilter restricts which log levels are sent to this client.
+	// nil means no filtering (send all levels).
+	LevelFilter map[string]bool
+	FilterMu    sync.RWMutex
+
 	// LastActivity tracks the last time we received a message from the client
 	LastActivity time.Time
 	ActivityMu   sync.RWMutex
@@ -123,6 +128,9 @@ type Hub struct {
 type BroadcastMessage struct {
 	ExecutionID string
 	Data        []byte
+	// Level is the log level of this message (used for server-side filtering).
+	// Empty string means the message bypasses level filtering (e.g., complete, metadata).
+	Level string
 }
 
 // Config holds WebSocket configuration

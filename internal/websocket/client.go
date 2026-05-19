@@ -183,3 +183,11 @@ func (c *Client) GetLastActivity() time.Time {
 	defer c.ActivityMu.RUnlock()
 	return c.LastActivity
 }
+
+// SetLevelFilter sets the log level filter for this client.
+// Pass nil to disable filtering (receive all levels).
+func (c *Client) SetLevelFilter(filter map[string]bool) {
+	c.FilterMu.Lock()
+	c.LevelFilter = filter
+	c.FilterMu.Unlock()
+}

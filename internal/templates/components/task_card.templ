@@ -52,7 +52,7 @@ templ TaskCard(task templates.TaskCard) {
 				View
 			</a>
 			<button
-				onclick={ templ.ComponentScript{Call: "runTask('" + task.Name + "')"} }
+				onclick={ templ.ComponentScript{Call: "runTask('" + task.Name + "', event)"} }
 				class="btn btn-primary text-sm"
 			>
 				<svg class="w-4 h-4 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">

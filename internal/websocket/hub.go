@@ -124,6 +124,17 @@ func (h *Hub) broadcastMessage(message *BroadcastMessage) {
 		wg.Add(1)
 		go func(c *Client) {
 			defer wg.Done()
+
+			// Apply server-side level filter if the message has a level
+			if message.Level != "" {
+				c.FilterMu.RLock()
+				filter := c.LevelFilter
+				c.FilterMu.RUnlock()
+				if !MatchesFilter(message.Level, filter) {
+					return
+				}
+			}
+
 			select {
 			case c.Send <- message.Data:
 				// Message sent successfully

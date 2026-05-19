@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -19,6 +20,7 @@ import (
 	"github.com/sgaunet/runrun/internal/templates"
 	"github.com/sgaunet/runrun/internal/templates/layouts"
 	"github.com/sgaunet/runrun/internal/templates/pages"
+	ws "github.com/sgaunet/runrun/internal/websocket"
 )
 
 // writeJSON encodes data as JSON to the response writer, logging any errors.
@@ -35,22 +37,6 @@ func writeWSJSON(conn *websocket.Conn, v any) {
 	}
 }
 
-// countFileLines counts the number of lines in a file efficiently.
-func countFileLines(filePath string) (int, error) {
-	f, err := os.Open(filePath)
-	if err != nil {
-		return 0, err
-	}
-	defer f.Close()
-
-	count := 0
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	for scanner.Scan() {
-		count++
-	}
-	return count, scanner.Err()
-}
 
 // sendLogBatch sends a batch of log lines as a single WebSocket message.
 // For single-line batches, sends as a regular "log" message for backward compatibility.
@@ -533,6 +519,91 @@ func (s *Server) pollLogsHandler(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, response)
 }
 
+// segmentLogsHandler returns a paginated segment of log lines for a completed execution.
+// Query params: start (0-indexed line, default 0), count (lines to return, default 500, max 5000),
+// mode ("head" from start, "tail" from end).
+func (s *Server) segmentLogsHandler(w http.ResponseWriter, r *http.Request) {
+	executionID := chi.URLParam(r, "executionID")
+
+	execution, err := s.executor.GetExecution(executionID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Execution not found: %v", err), http.StatusNotFound)
+		return
+	}
+
+	if execution.LogFilePath == "" {
+		http.Error(w, "Log file not available", http.StatusNotFound)
+		return
+	}
+
+	// Parse query params
+	start, _ := strconv.Atoi(r.URL.Query().Get("start"))
+	count, _ := strconv.Atoi(r.URL.Query().Get("count"))
+	mode := r.URL.Query().Get("mode")
+
+	if count <= 0 {
+		count = 500
+	}
+	if count > 5000 {
+		count = 5000
+	}
+	if start < 0 {
+		start = 0
+	}
+	if mode == "" {
+		mode = "head"
+	}
+
+	// For tail mode, calculate start from end
+	if mode == "tail" {
+		totalLines, err := executor.CountFileLines(execution.LogFilePath)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Failed to count lines: %v", err), http.StatusInternalServerError)
+			return
+		}
+		start = totalLines - count
+		if start < 0 {
+			start = 0
+		}
+	}
+
+	lines, totalLines, err := executor.ReadLogSegment(execution.LogFilePath, start, count)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to read log segment: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Build response lines with level detection
+	type lineEntry struct {
+		Line   string `json:"line"`
+		Level  string `json:"level"`
+		Number int    `json:"number"`
+	}
+	responseLines := make([]lineEntry, len(lines))
+	for i, line := range lines {
+		responseLines[i] = lineEntry{
+			Line:   line,
+			Level:  ws.ParseLogLevel(line),
+			Number: start + i,
+		}
+	}
+
+	hasMore := start+len(lines) < totalLines
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	writeJSON(w, map[string]interface{}{
+		"execution_id": executionID,
+		"task_name":    execution.TaskName,
+		"status":       execution.Status,
+		"lines":        responseLines,
+		"total_lines":  totalLines,
+		"start":        start,
+		"count":        len(lines),
+		"has_more":     hasMore,
+	})
+}
+
 // upgrader configures the WebSocket protocol upgrade from HTTP
 //
 // SECURITY: Origin validation (CheckOrigin) prevents Cross-Site WebSocket Hijacking (CSWSH) attacks
@@ -658,24 +729,32 @@ func (s *Server) wsLogsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
+	// Parse optional level filter from query parameters (?level=error,warn)
+	levelFilter := ws.ParseLevelFilter(r.URL.Query().Get("level"))
+
 	// Determine mode: running executions get real-time streaming via Hub,
 	// completed executions get log file streaming
 	isRunning := execution.FinishedAt == nil
 
 	if isRunning {
 		// Real-time mode: register client with Hub and subscribe to execution
-		s.wsLogsRealtime(conn, r, executionID)
+		s.wsLogsRealtime(conn, r, executionID, levelFilter)
 	} else {
 		// Completed mode: stream from log file
-		s.wsLogsFromFile(conn, r, execution, executionID)
+		s.wsLogsFromFile(conn, r, execution, executionID, levelFilter)
 	}
 }
 
 // wsLogsRealtime handles WebSocket connections for running executions.
 // It registers the client with the Hub so it receives real-time broadcasts from the executor.
-func (s *Server) wsLogsRealtime(conn *websocket.Conn, r *http.Request, executionID string) {
+func (s *Server) wsLogsRealtime(conn *websocket.Conn, r *http.Request, executionID string, levelFilter map[string]bool) {
 	// Create a Hub client for this connection
 	client := s.wsHub.RegisterClient(conn)
+
+	// Apply server-side level filter if specified
+	if levelFilter != nil {
+		client.SetLevelFilter(levelFilter)
+	}
 
 	// Subscribe to this execution's log stream
 	s.wsHub.Subscribe(client, executionID)
@@ -720,7 +799,7 @@ func (s *Server) wsLogsRealtime(conn *websocket.Conn, r *http.Request, execution
 }
 
 // wsLogsFromFile streams log content from a completed execution's log file
-func (s *Server) wsLogsFromFile(conn *websocket.Conn, r *http.Request, execution *executor.Execution, executionID string) {
+func (s *Server) wsLogsFromFile(conn *websocket.Conn, r *http.Request, execution *executor.Execution, executionID string, levelFilter map[string]bool) {
 	if execution.LogFilePath == "" {
 		// No log file available
 		msg := map[string]interface{}{
@@ -745,7 +824,7 @@ func (s *Server) wsLogsFromFile(conn *websocket.Conn, r *http.Request, execution
 	}
 
 	// Count total lines first for metadata
-	totalLines, countErr := countFileLines(execution.LogFilePath)
+	totalLines, countErr := executor.CountFileLines(execution.LogFilePath)
 
 	// Open and stream the log file
 	file, err := os.Open(execution.LogFilePath)
@@ -783,6 +862,9 @@ func (s *Server) wsLogsFromFile(conn *websocket.Conn, r *http.Request, execution
 		}
 	}()
 
+	// Parse optional start_line query param to skip N lines
+	startLine, _ := strconv.Atoi(r.URL.Query().Get("start_line"))
+
 	// Stream lines from the log file in batches for efficiency
 	batchSize := s.wsHub.GetConfig().FileStreamBatchSize
 	if batchSize <= 0 {
@@ -790,14 +872,35 @@ func (s *Server) wsLogsFromFile(conn *websocket.Conn, r *http.Request, execution
 	}
 
 	reader := bufio.NewReader(file)
+	lineNum := 0
 	batch := make([]map[string]interface{}, 0, batchSize)
 	for {
 		line, readErr := reader.ReadString('\n')
 		if line != "" {
+			lineNum++
+
+			// Skip lines before start_line
+			if lineNum <= startLine {
+				if readErr != nil {
+					break
+				}
+				continue
+			}
+
+			level := ws.ParseLogLevel(line)
+
+			// Apply server-side level filter
+			if !ws.MatchesFilter(level, levelFilter) {
+				if readErr != nil {
+					break
+				}
+				continue
+			}
+
 			batch = append(batch, map[string]interface{}{
 				"line":      line,
 				"timestamp": time.Now().Format(time.RFC3339),
-				"level":     "info",
+				"level":     level,
 			})
 
 			if len(batch) >= batchSize {

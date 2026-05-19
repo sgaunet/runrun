@@ -16,3 +16,5 @@ coverage.txt
 # Frontend build tools and generated files
 /tools/
 /internal/server/static/css/styles.css
+/.playwright-cli
+/.claude

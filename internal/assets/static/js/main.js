@@ -108,7 +108,7 @@ class LogPoller {
     }
 
     poll() {
-        fetch(`/api/logs/${this.executionID}/poll?lines=100`)
+        fetch(`/logs/${this.executionID}/poll?lines=100`)
             .then(res => res.json())
             .then(data => {
                 if (data.logs && data.logs.length > this.lastLogCount) {

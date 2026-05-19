@@ -150,8 +150,13 @@ func (b *Broadcaster) broadcastLogImmediate(executionID, logLine, level string) 
 		return
 	}
 
+	effectiveLevel := level
+	if effectiveLevel == "" {
+		effectiveLevel = "info"
+	}
 	b.Hub.Broadcast <- &BroadcastMessage{
 		ExecutionID: executionID,
 		Data:        data,
+		Level:       effectiveLevel,
 	}
 }

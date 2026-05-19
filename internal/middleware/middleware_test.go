@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -548,4 +550,105 @@ func TestLoggingMiddleware_WithRequestIDInvalid(t *testing.T) {
 	handler.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+// captureNonce wraps CSPNonceMiddleware and writes the per-request nonce
+// observed inside the handler into a string pointer for the test to assert
+// on.
+func captureNonce(out *string) http.Handler {
+	return CSPNonceMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		*out = NonceFromContext(r.Context())
+		w.WriteHeader(http.StatusOK)
+	}))
+}
+
+func TestCSPNonceMiddlewareGeneratesFreshNoncePerRequest(t *testing.T) {
+	var first, second string
+	handler := captureNonce(&first)
+
+	req1 := httptest.NewRequest(http.MethodGet, "/page", nil)
+	w1 := httptest.NewRecorder()
+	handler.ServeHTTP(w1, req1)
+
+	// Re-bind output pointer for a second request
+	handler = captureNonce(&second)
+	req2 := httptest.NewRequest(http.MethodGet, "/page", nil)
+	w2 := httptest.NewRecorder()
+	handler.ServeHTTP(w2, req2)
+
+	assert.NotEmpty(t, first, "nonce should be populated on the request context")
+	assert.NotEmpty(t, second)
+	assert.NotEqual(t, first, second, "each request must receive a distinct nonce")
+
+	// base64-url encoding of 16 bytes yields 22 chars (no padding). At minimum
+	// the nonce MUST have enough entropy to round-trip to ≥128 bits.
+	assert.GreaterOrEqual(t, len(first), 22)
+	assert.GreaterOrEqual(t, len(second), 22)
+	assert.Regexp(t, regexp.MustCompile(`^[A-Za-z0-9_-]+$`), first,
+		"nonce should be base64url-encoded (no padding)")
+}
+
+func TestNonceFromContextReturnsEmptyWhenAbsent(t *testing.T) {
+	assert.Equal(t, "", NonceFromContext(context.Background()))
+}
+
+// runSecurityHeaders runs SecurityHeadersMiddleware inside CSPNonceMiddleware
+// and returns the resulting CSP header on the response.
+func runSecurityHeaders(t *testing.T) (string, string) {
+	t.Helper()
+	chain := CSPNonceMiddleware(SecurityHeadersMiddleware(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}),
+	))
+	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+	w := httptest.NewRecorder()
+	chain.ServeHTTP(w, req)
+	csp := w.Header().Get("Content-Security-Policy")
+	return csp, w.Header().Get("X-Frame-Options")
+}
+
+func TestSecurityHeadersCSPExcludesUnsafeInline(t *testing.T) {
+	csp, _ := runSecurityHeaders(t)
+	assert.NotEmpty(t, csp, "Content-Security-Policy must be set")
+	assert.NotContains(t, csp, "'unsafe-inline'",
+		"strict CSP MUST NOT contain 'unsafe-inline'")
+}
+
+func TestSecurityHeadersCSPExcludesUnsafeEval(t *testing.T) {
+	csp, _ := runSecurityHeaders(t)
+	assert.NotContains(t, csp, "'unsafe-eval'",
+		"strict CSP MUST NOT contain 'unsafe-eval'")
+}
+
+func TestSecurityHeadersCSPContainsRequestNonce(t *testing.T) {
+	csp, xfo := runSecurityHeaders(t)
+	assert.Contains(t, csp, "script-src 'self' 'nonce-",
+		"script-src must use a nonce, not 'unsafe-inline'")
+	// Sanity check: other expected directives are present.
+	assert.Contains(t, csp, "default-src 'self'")
+	assert.Contains(t, csp, "object-src 'none'")
+	assert.Contains(t, csp, "frame-ancestors 'none'")
+	assert.Equal(t, "DENY", xfo)
+}
+
+func TestSecurityHeadersCSPNonceMatchesContextValue(t *testing.T) {
+	var observed string
+	chain := CSPNonceMiddleware(SecurityHeadersMiddleware(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			observed = NonceFromContext(r.Context())
+			w.WriteHeader(http.StatusOK)
+		}),
+	))
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	w := httptest.NewRecorder()
+	chain.ServeHTTP(w, req)
+
+	csp := w.Header().Get("Content-Security-Policy")
+	assert.NotEmpty(t, observed)
+	assert.True(t,
+		strings.Contains(csp, "'nonce-"+observed+"'"),
+		"the nonce in the CSP header must equal the one stored on the request context (got header %q, ctx %q)",
+		csp, observed,
+	)
 }

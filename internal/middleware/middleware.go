@@ -3,6 +3,8 @@ package middleware
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"log"
 	"net"
 	"net/http"
@@ -14,6 +16,47 @@ import (
 	"github.com/sgaunet/runrun/internal/ctxkeys"
 	apperrors "github.com/sgaunet/runrun/internal/errors"
 )
+
+// cspNonceKey is the unexported context key under which the per-request
+// CSP nonce is stored. Using a distinct unexported type avoids context
+// key collisions with other packages.
+type cspNonceKey struct{}
+
+// cspNonceBytes is the number of random bytes used to generate the
+// per-request nonce. 16 bytes = 128 bits of entropy, the OWASP minimum
+// recommendation for CSP nonces.
+const cspNonceBytes = 16
+
+// CSPNonceMiddleware generates a fresh, cryptographically random nonce
+// for each request and stores it on the request context. Downstream
+// handlers retrieve it via NonceFromContext; SecurityHeadersMiddleware
+// uses it to populate the script-src directive of the Content-Security-
+// Policy header.
+func CSPNonceMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		buf := make([]byte, cspNonceBytes)
+		if _, err := rand.Read(buf); err != nil {
+			// rand.Read should not fail; if it does, fail closed.
+			apperrors.HandleError(w, r,
+				apperrors.InternalError("failed to generate CSP nonce", err))
+			return
+		}
+		nonce := base64.RawURLEncoding.EncodeToString(buf)
+		ctx := context.WithValue(r.Context(), cspNonceKey{}, nonce)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+// NonceFromContext returns the CSP nonce stored on ctx by
+// CSPNonceMiddleware, or "" if no nonce is present.
+func NonceFromContext(ctx context.Context) string {
+	if v := ctx.Value(cspNonceKey{}); v != nil {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	return ""
+}
 
 // RequestIDMiddleware adds a unique request ID to each request context
 func RequestIDMiddleware(next http.Handler) http.Handler {
@@ -56,14 +99,25 @@ func SecurityHeadersMiddleware(next http.Handler) http.Handler {
 		// Referrer policy
 		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
 
-		// Content Security Policy
+		// Strict Content Security Policy. Per specs/001-replace-tailwind-bulma:
+		//   - no 'unsafe-inline' in script-src or style-src
+		//   - no 'unsafe-eval' in script-src
+		//   - script-src uses a per-request nonce supplied by CSPNonceMiddleware
+		// The nonce is empty only if CSPNonceMiddleware has not run for this
+		// request (e.g. health endpoints that opt out); in that case the
+		// resulting policy still blocks inline scripts because the nonce
+		// directive matches nothing.
+		nonce := NonceFromContext(r.Context())
 		csp := "default-src 'self'; " +
-			"script-src 'self' 'unsafe-inline' 'unsafe-eval'; " +
-			"style-src 'self' 'unsafe-inline'; " +
+			"script-src 'self' 'nonce-" + nonce + "'; " +
+			"style-src 'self'; " +
 			"img-src 'self' data:; " +
 			"font-src 'self'; " +
 			"connect-src 'self'; " +
-			"frame-ancestors 'none'"
+			"frame-ancestors 'none'; " +
+			"base-uri 'self'; " +
+			"form-action 'self'; " +
+			"object-src 'none'"
 		w.Header().Set("Content-Security-Policy", csp)
 
 		// Permissions Policy (formerly Feature-Policy)

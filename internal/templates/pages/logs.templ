@@ -9,179 +9,198 @@ templ Logs(data LogsPageData) {
 }
 
 templ logsContent(data LogsPageData) {
-	<div class="py-6">
-		<div class="mb-6">
-			<a href={ templ.URL("/tasks/" + data.TaskName) } class="text-primary-600 hover:text-primary-700 flex items-center gap-1">
-				<span>&larr;</span>
-				<span>Back to Task</span>
-			</a>
-		</div>
-		<div class="mb-6">
-			<h2 class="text-3xl font-bold text-gray-900 mb-2">Execution Logs</h2>
-			<div class="flex flex-wrap gap-4 text-sm text-gray-600">
-				<div>
-					<span class="font-semibold">Execution ID:</span>
-					<code class="ml-2 bg-gray-100 px-2 py-1 rounded">{ data.ExecutionID }</code>
+	<section class="section pt-4">
+		<div class="container is-fluid">
+			<div class="mb-4">
+				<a href={ templ.URL("/tasks/" + data.TaskName) } class="has-text-link runrun-row--tight">
+					<svg class="runrun-icon runrun-icon--flip" aria-hidden="true">
+						<use href="/static/icons/sprite.svg#chevron-right"></use>
+					</svg>
+					<span>Back to Task</span>
+				</a>
+			</div>
+
+			<div class="level mb-4">
+				<div class="level-left">
+					<div>
+						<h2 class="title is-4">Execution Logs</h2>
+						<div class="tags has-addons mt-2">
+							<span class="tag is-dark">Execution</span>
+							<span class="tag"><code>{ data.ExecutionID }</code></span>
+						</div>
+					</div>
 				</div>
-				<div>
-					<span class="font-semibold">Task:</span>
-					<span class="ml-2">{ data.TaskName }</span>
-				</div>
-				<div>
-					<span class="font-semibold">Status:</span>
-					<span class={ "ml-2 status-badge", "status-" + data.Status }>{ data.Status }</span>
+				<div class="level-right">
+					<div class="tags has-addons">
+						<span class="tag is-dark">Task</span>
+						<span class="tag is-info">{ data.TaskName }</span>
+					</div>
+					<div class="tags has-addons ml-3">
+						<span class="tag is-dark">Status</span>
+						<span class={ "tag", "status-badge", "status-" + data.Status, statusTagInline(data.Status) }>
+							{ data.Status }
+						</span>
+					</div>
 				</div>
 			</div>
+
+			<div id="logViewerContainer"></div>
+			<div id="wsBanner" class="notification is-warning is-light runrun-ws-banner is-hidden">
+				<strong>Connection lost.</strong>
+				The log stream was interrupted; switched to polling.
+				<button class="button is-warning is-small ml-3" type="button" data-action="ws-reconnect">Reconnect now</button>
+			</div>
 		</div>
-		<div id="logViewerContainer"></div>
-	</div>
-	<script type="module" src="/static/js/vendor/ansi_up_loader.js"></script>
-	<script src="/static/js/log-viewer.js"></script>
+	</section>
+	<script type="module" src={ "/static/js/vendor/ansi_up_loader.js?v=" + data.BaseData.AssetVersion } nonce={ data.BaseData.CSPNonce }></script>
 	@logsScript(data.ExecutionID, data.Status)
 }
 
-// logsScript generates the logs viewer JavaScript with execution ID
+// logsScript wires the LogViewer to the WebSocket / pagination endpoints.
+// Emitted under the per-request CSP nonce via templ.WithNonce.
 script logsScript(executionID string, executionStatus string) {
-	const EXECUTION_ID = executionID;
-	const EXECUTION_STATUS = executionStatus;
+	(function () {
+		'use strict';
+		const EXECUTION_ID = executionID;
+		const EXECUTION_STATUS = executionStatus;
 
-	// Wait for AnsiUp to be loaded by the module before initializing
-	function initLogViewer() {
-		if (typeof window.AnsiUp === 'undefined') {
-			// AnsiUp not loaded yet, wait and retry
-			setTimeout(initLogViewer, 50);
-			return;
-		}
-
-		// Initialize log viewer
-		const logViewer = new LogViewer('logViewerContainer', {
-			autoScroll: true,
-			showLineNumbers: true,
-			showTimestamps: true
-		});
-
-		// Connect to WebSocket for real-time logs
-		const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-		const wsBaseUrl = `${protocol}//${window.location.host}/logs/ws/${EXECUTION_ID}`;
-		let serverLevelFilter = ''; // Server-side level filter (query param)
-
-		function buildWsUrl() {
-			if (serverLevelFilter && serverLevelFilter !== 'all') {
-				return `${wsBaseUrl}?level=${encodeURIComponent(serverLevelFilter)}`;
+		function initLogViewer() {
+			if (typeof window.AnsiUp === 'undefined' || !window.RunRun || !window.RunRun.LogViewer) {
+				setTimeout(initLogViewer, 50);
+				return;
 			}
-			return wsBaseUrl;
-		}
 
-		let ws = null;
-		let reconnectAttempts = 0;
-		const maxReconnectAttempts = 5;
+			const logViewer = new window.RunRun.LogViewer('logViewerContainer', {
+				autoScroll: true,
+				showLineNumbers: true,
+				showTimestamps: true,
+			});
 
-		function connectWebSocket() {
-			ws = new WebSocket(buildWsUrl());
+			const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+			const wsBaseUrl = protocol + '//' + window.location.host + '/logs/ws/' + EXECUTION_ID;
+			let ws = null;
+			let reconnectAttempts = 0;
+			const maxReconnectAttempts = 5;
+			let pollInterval = null;
 
-			ws.onopen = () => {
-				console.log('WebSocket connected');
-				reconnectAttempts = 0;
-			};
+			function buildWsUrl() { return wsBaseUrl; }
 
-			ws.onmessage = (event) => {
-				try {
-					const message = JSON.parse(event.data);
-					if (message.type === 'metadata' && message.data) {
-						if (message.data.total_lines != null) {
-							logViewer.setTotalLines(message.data.total_lines);
-						}
-					} else if (message.type === 'log' && message.data) {
-						logViewer.addLine(message.data.line, {
-							timestamp: new Date(message.data.timestamp),
-							level: message.data.level
-						});
-					} else if (message.type === 'log_batch' && Array.isArray(message.data)) {
-						for (const entry of message.data) {
-							logViewer.addLine(entry.line, {
-								timestamp: new Date(entry.timestamp),
-								level: entry.level
+			function showWsBanner() {
+				const b = document.getElementById('wsBanner');
+				if (b) b.classList.remove('is-hidden');
+			}
+			function hideWsBanner() {
+				const b = document.getElementById('wsBanner');
+				if (b) b.classList.add('is-hidden');
+			}
+
+			function connectWebSocket() {
+				ws = new WebSocket(buildWsUrl());
+				ws.onopen = function () {
+					reconnectAttempts = 0;
+					hideWsBanner();
+				};
+				ws.onmessage = function (event) {
+					try {
+						const message = JSON.parse(event.data);
+						if (message.type === 'metadata' && message.data) {
+							if (message.data.total_lines != null) {
+								logViewer.setTotalLines(message.data.total_lines);
+							}
+						} else if (message.type === 'log' && message.data) {
+							logViewer.addLine(message.data.line, {
+								timestamp: new Date(message.data.timestamp),
+								level: message.data.level,
+							});
+						} else if (message.type === 'log_batch' && Array.isArray(message.data)) {
+							for (const entry of message.data) {
+								logViewer.addLine(entry.line, {
+									timestamp: new Date(entry.timestamp),
+									level: entry.level,
+								});
+							}
+						} else if (message.type === 'complete' && message.data) {
+							const statusBadge = document.querySelector('.status-badge');
+							if (statusBadge) {
+								const oldStatus = statusBadge.textContent.trim();
+								const newStatus = message.data.status || 'unknown';
+								statusBadge.textContent = newStatus;
+								statusBadge.className = statusBadge.className.replace('status-' + oldStatus, 'status-' + newStatus);
+							}
+							reconnectAttempts = maxReconnectAttempts;
+							logViewer.addLine('[Execution completed: ' + message.data.status + ']', {
+								timestamp: new Date(),
+								level: 'info',
 							});
 						}
-					} else if (message.type === 'complete' && message.data) {
-						// Update status badge on the page
-						const statusBadge = document.querySelector('.status-badge');
-						if (statusBadge) {
-							const oldStatus = statusBadge.textContent.trim();
-							const newStatus = message.data.status || 'unknown';
-							statusBadge.textContent = newStatus;
-							statusBadge.className = statusBadge.className.replace('status-' + oldStatus, 'status-' + newStatus);
-						}
-						// Stop reconnect attempts
-						reconnectAttempts = maxReconnectAttempts;
-						logViewer.addLine(`[Execution completed: ${message.data.status}]`, {
-							timestamp: new Date(),
-							level: 'info'
-						});
+					} catch (e) {
+						console.error('Failed to parse WebSocket message:', e);
 					}
-				} catch (e) {
-					console.error('Failed to parse WebSocket message:', e);
-				}
-			};
+				};
+				ws.onerror = function (error) { console.error('WebSocket error:', error); };
+				ws.onclose = function () {
+					if (reconnectAttempts < maxReconnectAttempts) {
+						reconnectAttempts++;
+						const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
+						showWsBanner();
+						setTimeout(connectWebSocket, delay);
+					} else {
+						showWsBanner();
+						startPolling();
+					}
+				};
+			}
 
-			ws.onerror = (error) => {
-				console.error('WebSocket error:', error);
-			};
+			function startPolling() {
+				if (pollInterval) return;
+				pollInterval = setInterval(function () {
+					fetch('/logs/' + EXECUTION_ID + '/poll?lines=100', { credentials: 'same-origin' })
+						.then(function (res) { return res.json(); })
+						.then(function (data) {
+							if (data.logs && data.logs.length > 0) {
+								logViewer.clear();
+								logViewer.addLines(data.logs);
+							}
+						})
+						.catch(function (err) { console.error('Polling error:', err); });
+				}, 3000);
+			}
 
-			ws.onclose = () => {
-				console.log('WebSocket closed');
-				if (reconnectAttempts < maxReconnectAttempts) {
-					reconnectAttempts++;
-					const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
-					console.log(`Reconnecting in ${delay}ms (attempt ${reconnectAttempts}/${maxReconnectAttempts})`);
-					setTimeout(connectWebSocket, delay);
-				} else {
-					console.log('Max reconnect attempts reached, falling back to polling');
-					startPolling();
-				}
-			};
+			const isCompleted =
+				EXECUTION_STATUS === 'success' ||
+				EXECUTION_STATUS === 'failed' ||
+				EXECUTION_STATUS === 'cancelled';
+
+			if (isCompleted) {
+				logViewer.enablePagination(EXECUTION_ID);
+			} else {
+				connectWebSocket();
+			}
+
+			// Manual reconnect button (data-action="ws-reconnect").
+			document.addEventListener('click', function (e) {
+				const t = e.target.closest('[data-action="ws-reconnect"]');
+				if (!t) return;
+				e.preventDefault();
+				if (ws) try { ws.close(); } catch (_) { /* ignore */ }
+				if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
+				reconnectAttempts = 0;
+				hideWsBanner();
+				connectWebSocket();
+			});
+
+			window.addEventListener('beforeunload', function () {
+				if (ws) ws.close();
+				if (pollInterval) clearInterval(pollInterval);
+			});
 		}
 
-		// HTTP polling fallback
-		let pollInterval = null;
-		function startPolling() {
-			if (pollInterval) return;
-
-			pollInterval = setInterval(() => {
-				fetch(`/logs/${EXECUTION_ID}/poll?lines=100`)
-					.then(res => res.json())
-					.then(data => {
-						if (data.logs && data.logs.length > 0) {
-							logViewer.clear();
-							logViewer.addLines(data.logs);
-						}
-					})
-					.catch(err => console.error('Polling error:', err));
-			}, 3000);
-		}
-
-		// Determine if execution is completed (use pagination) or running (use WebSocket)
-		const isCompleted = EXECUTION_STATUS === 'success' || EXECUTION_STATUS === 'failed' || EXECUTION_STATUS === 'cancelled';
-
-		if (isCompleted) {
-			logViewer.enablePagination(EXECUTION_ID);
+		if (document.readyState === 'loading') {
+			document.addEventListener('DOMContentLoaded', initLogViewer);
 		} else {
-			connectWebSocket();
+			initLogViewer();
 		}
-
-		// Cleanup on page unload
-		window.addEventListener('beforeunload', () => {
-			if (ws) ws.close();
-			if (pollInterval) clearInterval(pollInterval);
-		});
-	}
-
-	// Start initialization when DOM is ready
-	if (document.readyState === 'loading') {
-		document.addEventListener('DOMContentLoaded', initLogViewer);
-	} else {
-		initLogViewer();
-	}
+	}());
 }
 
 // LogsPageData contains data for the logs page

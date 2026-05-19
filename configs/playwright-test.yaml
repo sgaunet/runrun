@@ -1,0 +1,57 @@
+# RunRun test fixture for the playwright-cli validation procedure.
+# See specs/001-replace-tailwind-bulma/research.md §6 and quickstart.md §2.
+#
+# Credentials are intentionally low-sensitivity; this config is for
+# local browser validation only and MUST NOT be used in production.
+#
+#   username: e2e-admin
+#   password: e2e-password!
+
+server:
+  port: 18080
+  log_level: "info"
+  max_concurrent_tasks: 3
+  session_timeout: 5m
+  log_directory: "./.test-logs"
+  shutdown_timeout: 5s
+
+auth:
+  jwt_secret: "test-only-secret-do-not-use-in-production-32+chars"
+  users:
+    - username: "e2e-admin"
+      password: "$2a$10$ju79Gjo6GXI5fC7rjpx83uyGS6unr2YS.MRSOGEmpXSYQJDUHhkPe"  # "e2e-password!"
+
+tasks:
+  - name: "echo-ok"
+    description: "Single echo step that succeeds quickly."
+    tags: ["e2e", "success"]
+    timeout: 5s
+    working_directory: "."
+    steps:
+      - name: "Print greeting"
+        command: "echo 'hello from echo-ok'"
+
+  - name: "fail-task"
+    description: "Single step that exits non-zero, to exercise the failure UX."
+    tags: ["e2e", "failure"]
+    timeout: 5s
+    working_directory: "."
+    steps:
+      - name: "Always fail"
+        command: "false"
+
+  - name: "multi-step"
+    description: "Three short steps producing log lines, used to exercise log filter and pagination."
+    tags: ["e2e", "multi"]
+    timeout: 10s
+    working_directory: "."
+    environment:
+      GREETING: "hello"
+      TARGET: "RunRun"
+    steps:
+      - name: "Step one"
+        command: "echo 'step one: starting'; sleep 0.2; echo 'step one: done'"
+      - name: "Step two"
+        command: "echo \"$GREETING, $TARGET — step two\"; sleep 0.2; echo 'WARN: synthetic warning for filter testing' 1>&2"
+      - name: "Step three"
+        command: "echo 'step three: done'"

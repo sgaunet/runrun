@@ -1,32 +1,19 @@
 package components
 
 templ Spinner() {
-	<div class="flex justify-center items-center p-8">
-		<div class="spinner w-12 h-12"></div>
+	<div class="has-text-centered py-5">
+		<button class="button is-loading is-large is-primary is-light" aria-label="Loading">Loading</button>
 	</div>
 }
 
 templ SpinnerInline() {
-	<div class="spinner w-5 h-5 inline-block"></div>
+	<span class="button is-loading is-small is-light" aria-label="Loading"></span>
 }
 
 templ SkeletonTaskCard() {
-	<div class="task-card animate-pulse">
-		<div class="task-card-header">
-			<div class="h-6 bg-gray-300 rounded w-1/3"></div>
-			<div class="h-6 bg-gray-300 rounded-full w-16"></div>
-		</div>
-		<div class="space-y-2">
-			<div class="h-4 bg-gray-300 rounded w-full"></div>
-			<div class="h-4 bg-gray-300 rounded w-2/3"></div>
-		</div>
-		<div class="flex gap-2 mt-4">
-			<div class="h-6 bg-gray-300 rounded w-16"></div>
-			<div class="h-6 bg-gray-300 rounded w-16"></div>
-		</div>
-		<div class="task-actions">
-			<div class="h-10 bg-gray-300 rounded w-24"></div>
-			<div class="h-10 bg-gray-300 rounded w-20"></div>
+	<div class="card">
+		<div class="card-content">
+			<progress class="progress is-small is-primary" max="100">Loading</progress>
 		</div>
 	</div>
 }

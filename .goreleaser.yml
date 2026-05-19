@@ -18,10 +18,8 @@ before:
     - go install github.com/a-h/templ/cmd/templ@latest
     # Generate templ templates
     - templ generate
-    # Download Tailwind CSS binary for the build platform
-    - sh -c 'mkdir -p tools && wget -O tools/tailwindcss "https://github.com/tailwindlabs/tailwindcss/releases/latest/download/tailwindcss-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m | sed "s/x86_64/x64/" | sed "s/aarch64/arm64/")" && chmod +x tools/tailwindcss'
-    # Build Tailwind CSS
-    - ./tools/tailwindcss -i internal/server/static/css/input.css -o internal/server/static/css/styles.css --minify
+    # Sync the dev static tree into the embed tree (Bulma + Alpine + sprite)
+    - sh -c 'mkdir -p internal/assets/static && rsync -a --delete --exclude=.DS_Store internal/server/static/ internal/assets/static/'
     # Ensure generated files are present
     - go mod tidy
 

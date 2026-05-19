@@ -5,6 +5,28 @@ includes:
 
 vars:
   BINFILE: runrun
+  # Static asset trees (kept byte-identical by sync-assets)
+  STATIC_SRC: internal/server/static
+  STATIC_EMBED: internal/assets/static
+  # Required embedded assets (audit-assets fails if any are missing)
+  REQUIRED_ASSETS: >-
+    css/bulma.min.css
+    css/app.css
+    js/vendor/alpine.csp.min.js
+    js/main.js
+    js/log-viewer.js
+    icons/sprite.svg
+    favicon.ico
+  # Forbidden legacy assets (audit-assets fails if any are present)
+  FORBIDDEN_FILES: >-
+    {{.STATIC_SRC}}/css/input.css
+    {{.STATIC_SRC}}/css/styles.css
+    {{.STATIC_SRC}}/css/style.css
+    {{.STATIC_EMBED}}/css/input.css
+    {{.STATIC_EMBED}}/css/styles.css
+    {{.STATIC_EMBED}}/css/style.css
+    tailwind.config.js
+    tools/tailwindcss
 
 tasks:
   default:
@@ -25,7 +47,7 @@ tasks:
       - task: lint
 
   install-tools:
-    desc: "Install development tools"
+    desc: "Install development tools (templ)"
     cmds:
       - go install github.com/a-h/templ/cmd/templ@latest
 
@@ -34,19 +56,44 @@ tasks:
     cmds:
       - templ generate
 
-  build-css:
-    desc: "Build CSS with Tailwind"
+  sync-assets:
+    desc: "Sync internal/server/static/ -> internal/assets/static/ (byte-identical)"
     cmds:
-      - ./tools/tailwindcss -i internal/server/static/css/input.css -o internal/server/static/css/styles.css --minify
+      - mkdir -p {{.STATIC_EMBED}}
+      - rsync -a --delete --exclude='.DS_Store' {{.STATIC_SRC}}/ {{.STATIC_EMBED}}/
+      - |
+        if ! diff -r --no-dereference {{.STATIC_SRC}} {{.STATIC_EMBED}} > /dev/null 2>&1; then
+          echo 'sync-assets: trees diverged after rsync' >&2
+          exit 1
+        fi
+
+  audit-assets:
+    desc: "Verify required assets exist and forbidden artifacts are absent"
+    cmds:
+      - |
+        missing=0
+        for f in {{.REQUIRED_ASSETS}}; do
+          for tree in {{.STATIC_SRC}} {{.STATIC_EMBED}}; do
+            if [ ! -f "$tree/$f" ]; then
+              echo "audit-assets: missing $tree/$f" >&2
+              missing=1
+            fi
+          done
+        done
+        if [ $missing -ne 0 ]; then exit 1; fi
+      - |
+        present=0
+        for f in {{.FORBIDDEN_FILES}}; do
+          if [ -e "$f" ]; then
+            echo "audit-assets: forbidden artifact present: $f" >&2
+            present=1
+          fi
+        done
+        if [ $present -ne 0 ]; then exit 1; fi
 
   build-all:
-    desc: "Build all assets (CSS and application)"
-    deps: [generate, build-css, build]
-
-  watch-css:
-    desc: "Watch CSS changes (development)"
-    cmds:
-      - ./tools/tailwindcss -i internal/server/static/css/input.css -o internal/server/static/css/styles.css --watch
+    desc: "Generate templates, sync+audit assets, and build the application"
+    deps: [generate, sync-assets, audit-assets, build]
 
   lint:
     desc: "Run golangci-lint"
@@ -55,12 +102,13 @@ tasks:
 
   test:
     desc: "Run unit tests with race detection"
+    deps: [generate]
     cmds:
       - go test -count=2 -race ./...
 
   build:
     desc: "Build the application"
-    deps: [generate, build-css]
+    deps: [generate, sync-assets, audit-assets]
     cmds:
       - CGO_ENABLED=0 go build -o {{.BINFILE}} ./cmd/runrun
 
@@ -74,7 +122,7 @@ tasks:
 
   run:
     desc: "Run the server (development mode)"
-    deps: [generate]
+    deps: [generate, sync-assets]
     cmds:
       - go run ./cmd/runrun server --config configs/example.yaml
 
@@ -98,7 +146,6 @@ tasks:
     desc: "Clean build artifacts"
     cmds:
       - rm -f {{.BINFILE}}
-      - rm -f internal/server/static/css/styles.css
       - find . -name "*_templ.go" -type f -delete
 
   hash-password:

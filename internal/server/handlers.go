@@ -2,6 +2,7 @@ package server
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"html"
@@ -14,14 +15,36 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
+	"github.com/a-h/templ"
 	"github.com/sgaunet/runrun/internal/auth"
 	"github.com/sgaunet/runrun/internal/config"
 	"github.com/sgaunet/runrun/internal/executor"
+	mw "github.com/sgaunet/runrun/internal/middleware"
 	"github.com/sgaunet/runrun/internal/templates"
 	"github.com/sgaunet/runrun/internal/templates/layouts"
 	"github.com/sgaunet/runrun/internal/templates/pages"
 	ws "github.com/sgaunet/runrun/internal/websocket"
 )
+
+// withRenderNonce returns ctx with the per-request CSP nonce attached
+// via templ.WithNonce, so every <script> tag emitted by templ (including
+// templ-generated `script` blocks) is rendered with the corresponding
+// nonce attribute.
+func withRenderNonce(ctx context.Context) context.Context {
+	return templ.WithNonce(ctx, mw.NonceFromContext(ctx))
+}
+
+// baseData populates the fields common to every page render (title +
+// current user + CSRF token + per-request CSP nonce + asset version).
+func (s *Server) baseData(r *http.Request, title, currentUser, csrfToken string) layouts.BaseData {
+	return layouts.BaseData{
+		Title:        title,
+		CurrentUser:  currentUser,
+		CSRFToken:    csrfToken,
+		CSPNonce:     mw.NonceFromContext(r.Context()),
+		AssetVersion: s.assetVersion,
+	}
+}
 
 // writeJSON encodes data as JSON to the response writer, logging any errors.
 func writeJSON(w http.ResponseWriter, data any) {
@@ -161,7 +184,8 @@ func (s *Server) dashboardHandler(w http.ResponseWriter, r *http.Request) {
 <html>
 <head>
     <title>RunRun - Dashboard</title>
-    <link rel="stylesheet" href="/static/css/styles.css">
+    <link rel="stylesheet" href="/static/css/bulma.min.css">
+    <link rel="stylesheet" href="/static/css/app.css">
 </head>
 <body>
     <nav>
@@ -238,7 +262,8 @@ func (s *Server) taskDetailHandler(w http.ResponseWriter, r *http.Request) {
 <html>
 <head>
     <title>RunRun - %s</title>
-    <link rel="stylesheet" href="/static/css/styles.css">
+    <link rel="stylesheet" href="/static/css/bulma.min.css">
+    <link rel="stylesheet" href="/static/css/app.css">
 </head>
 <body>
     <nav>
@@ -406,7 +431,8 @@ func (s *Server) viewLogsHandler(w http.ResponseWriter, r *http.Request) {
 <html>
 <head>
     <title>RunRun - Logs %s</title>
-    <link rel="stylesheet" href="/static/css/styles.css">
+    <link rel="stylesheet" href="/static/css/bulma.min.css">
+    <link rel="stylesheet" href="/static/css/app.css">
 </head>
 <body>
     <nav>
@@ -1000,18 +1026,14 @@ func (s *Server) dashboardHandlerTempl(w http.ResponseWriter, r *http.Request) {
 
 	// Prepare page data
 	data := pages.DashboardPageData{
-		BaseData: layouts.BaseData{
-			Title:       "Dashboard",
-			CurrentUser: username,
-			CSRFToken:   csrfToken,
-		},
-		Tasks: taskCards,
-		Stats: dashboardStats,
+		BaseData: s.baseData(r, "Dashboard", username, csrfToken),
+		Tasks:    taskCards,
+		Stats:    dashboardStats,
 	}
 
 	// Render template
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := pages.Dashboard(data).Render(r.Context(), w); err != nil {
+	if err := pages.Dashboard(data).Render(withRenderNonce(r.Context()), w); err != nil {
 		http.Error(w, "Failed to render template", http.StatusInternalServerError)
 		return
 	}
@@ -1063,11 +1085,7 @@ func (s *Server) taskDetailHandlerTempl(w http.ResponseWriter, r *http.Request) 
 
 	// Prepare page data
 	data := pages.TaskDetailPageData{
-		BaseData: layouts.BaseData{
-			Title:       task.Name,
-			CurrentUser: username,
-			CSRFToken:   csrfToken,
-		},
+		BaseData:    s.baseData(r, task.Name, username, csrfToken),
 		TaskName:    task.Name,
 		Description: task.Description,
 		Tags:        task.Tags,
@@ -1077,7 +1095,7 @@ func (s *Server) taskDetailHandlerTempl(w http.ResponseWriter, r *http.Request) 
 
 	// Render template
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := pages.TaskDetail(data).Render(r.Context(), w); err != nil {
+	if err := pages.TaskDetail(data).Render(withRenderNonce(r.Context()), w); err != nil {
 		http.Error(w, "Failed to render template", http.StatusInternalServerError)
 		return
 	}
@@ -1089,17 +1107,13 @@ func (s *Server) loginPageHandlerTempl(w http.ResponseWriter, r *http.Request) {
 	errorMsg := r.URL.Query().Get("error")
 
 	data := pages.LoginPageData{
-		BaseData: layouts.BaseData{
-			Title:       "Login",
-			CurrentUser: "",
-			CSRFToken:   "",
-		},
-		Error: errorMsg,
+		BaseData: s.baseData(r, "Login", "", ""),
+		Error:    errorMsg,
 	}
 
 	// Render template
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := pages.Login(data).Render(r.Context(), w); err != nil {
+	if err := pages.Login(data).Render(withRenderNonce(r.Context()), w); err != nil {
 		http.Error(w, "Failed to render template", http.StatusInternalServerError)
 		return
 	}
@@ -1119,11 +1133,7 @@ func (s *Server) viewLogsHandlerTempl(w http.ResponseWriter, r *http.Request) {
 
 	// Prepare page data
 	data := pages.LogsPageData{
-		BaseData: layouts.BaseData{
-			Title:       "Logs - " + execution.TaskName,
-			CurrentUser: username,
-			CSRFToken:   "",
-		},
+		BaseData:    s.baseData(r, "Logs - "+execution.TaskName, username, ""),
 		ExecutionID: executionID,
 		TaskName:    execution.TaskName,
 		Status:      string(execution.Status),
@@ -1131,7 +1141,7 @@ func (s *Server) viewLogsHandlerTempl(w http.ResponseWriter, r *http.Request) {
 
 	// Render template
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := pages.Logs(data).Render(r.Context(), w); err != nil {
+	if err := pages.Logs(data).Render(withRenderNonce(r.Context()), w); err != nil {
 		http.Error(w, "Failed to render template", http.StatusInternalServerError)
 		return
 	}

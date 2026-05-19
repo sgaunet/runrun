@@ -2,6 +2,7 @@ package server
 
 import (
 	"log"
+	"runtime/debug"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -16,6 +17,23 @@ import (
 	"github.com/sgaunet/runrun/internal/websocket"
 )
 
+// assetVersion returns a short build identifier used to cache-bust the
+// embedded static assets in <link> and <script> URLs. It is derived from
+// the VCS revision recorded in the binary by the Go build pipeline. When
+// no VCS info is available (e.g. `go run`), it falls back to "dev".
+func assetVersion() string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return "dev"
+	}
+	for _, s := range info.Settings {
+		if s.Key == "vcs.revision" && len(s.Value) >= 7 {
+			return s.Value[:7]
+		}
+	}
+	return "dev"
+}
+
 // Server represents the HTTP server
 type Server struct {
 	router        *chi.Mux
@@ -29,13 +47,15 @@ type Server struct {
 	rateLimiter   *ratelimit.Limiter
 	csrf          *csrf.Protection
 	auditLogger   *security.Logger
+	assetVersion  string
 }
 
 // New creates a new server instance
 func New(cfg *config.Config) *Server {
 	s := &Server{
-		config:    cfg,
-		startTime: time.Now(),
+		config:       cfg,
+		startTime:    time.Now(),
+		assetVersion: assetVersion(),
 	}
 
 	// Initialize authentication service
@@ -106,7 +126,8 @@ func (s *Server) setupRouter() {
 	// Apply these middleware to ALL routes
 	r.Use(customMiddleware.RequestIDMiddleware)       // Custom request ID with UUID
 	r.Use(customMiddleware.RecoveryMiddleware)        // Custom panic recovery
-	r.Use(customMiddleware.SecurityHeadersMiddleware) // Security headers
+	r.Use(customMiddleware.CSPNonceMiddleware)        // Per-request CSP nonce (must precede SecurityHeaders)
+	r.Use(customMiddleware.SecurityHeadersMiddleware) // Security headers (reads nonce from context)
 	r.Use(customMiddleware.LoggingMiddleware)         // Custom logging
 	r.Use(middleware.RealIP)                          // Set RemoteAddr to real IP
 	// NOTE: Compression and Timeout middleware are applied selectively in SetupRoutes

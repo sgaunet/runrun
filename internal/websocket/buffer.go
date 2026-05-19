@@ -23,6 +23,7 @@ type StreamBuffer struct {
 
 	flushFn func(executionID string, batch []LogData)
 	timer   *time.Timer
+	flushWg sync.WaitGroup
 
 	executionID string
 }
@@ -96,17 +97,36 @@ func (sb *StreamBuffer) Flush() {
 }
 
 // Stop stops the buffer, flushes remaining lines, and stops the timer.
+// Stop is synchronous: when it returns, every line ever added to this buffer
+// (including any in-flight async flushes from the timer or size limits) has
+// been delivered through flushFn. Callers can therefore safely send a follow-up
+// message — e.g. the execution-complete signal — knowing it will arrive after
+// every log line.
 func (sb *StreamBuffer) Stop() {
 	sb.mu.Lock()
-	defer sb.mu.Unlock()
-
 	if sb.stopped {
+		sb.mu.Unlock()
 		return
 	}
-
 	sb.stopped = true
 	sb.timer.Stop()
-	sb.flushLocked()
+
+	var batch []LogData
+	if len(sb.lines) > 0 {
+		batch = make([]LogData, len(sb.lines))
+		copy(batch, sb.lines)
+		sb.lines = sb.lines[:0]
+		sb.currentBytes = 0
+	}
+	sb.mu.Unlock()
+
+	// Wait for any previously async-dispatched batches (timer- or size-triggered)
+	// to finish delivering before we flush the final batch synchronously.
+	sb.flushWg.Wait()
+
+	if batch != nil {
+		sb.flushFn(sb.executionID, batch)
+	}
 }
 
 // Len returns the current number of buffered lines.
@@ -141,8 +161,13 @@ func (sb *StreamBuffer) flushLocked() {
 	sb.lines = sb.lines[:0]
 	sb.currentBytes = 0
 
-	// Send batch outside the lock via goroutine to avoid blocking
-	go sb.flushFn(sb.executionID, batch)
+	// Send batch outside the lock via goroutine to avoid blocking.
+	// flushWg lets Stop() wait for these in-flight deliveries to complete.
+	sb.flushWg.Add(1)
+	go func(b []LogData) {
+		defer sb.flushWg.Done()
+		sb.flushFn(sb.executionID, b)
+	}(batch)
 }
 
 // dropOldestLocked drops the oldest line to make room. Must be called with mu held.

@@ -19,6 +19,31 @@
 - 📁 **Log Management** - Automatic log file creation and management with tail support
 - 🔍 **Health Checks** - Built-in health and readiness endpoints for monitoring
 
+## Screenshots
+
+### Tasks Dashboard
+
+The landing page after login. Aggregate counters (total, running, success, failed, idle, executions)
+sit above a search box with status and tag filters, and every configured task gets a card showing its
+description, tags, last run time, duration, and last status — with **View** and **Run** actions.
+
+![Tasks Dashboard](docs/01-tasks-dashboard.png)
+
+### Task Detail
+
+Per-task view with the task description, tags, a **Run Task** button, and the full execution history:
+execution ID, status, start time, duration, and a link to the logs of each run.
+
+![Task Detail](docs/02-one-task.png)
+
+### Execution Logs
+
+Live log viewer for a single execution, streamed over WebSocket. Logs can be searched, filtered by
+level, cleared, copied, or downloaded, with a line counter and auto-scroll toggle. Each line is
+timestamped and shows step boundaries, commands, exit codes, and per-step durations.
+
+![Execution Logs](docs/03-task-log.png)
+
 ## Tech Stack
 
 - **Backend**: Go 1.25+ with Chi router

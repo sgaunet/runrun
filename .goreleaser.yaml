@@ -1,0 +1,126 @@
+version: 2
+
+project_name: runrun
+
+before:
+  hooks:
+    # Templ-generated files are gitignored, so they must be regenerated here
+    - go install github.com/a-h/templ/cmd/templ@latest
+    - templ generate
+    # Mirror the dev static tree into the embed tree (Bulma + Alpine + sprite)
+    - sh -c 'mkdir -p internal/assets/static && rsync -a --delete --exclude=.DS_Store internal/server/static/ internal/assets/static/'
+    - go mod tidy
+
+builds:
+  - id: runrun
+    main: ./cmd/runrun
+    binary: runrun
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/sgaunet/runrun/cmd/runrun/cmd.Version={{ .Version }}
+      - -X github.com/sgaunet/runrun/cmd/runrun/cmd.GitCommit={{ .Commit }}
+      - -X github.com/sgaunet/runrun/cmd/runrun/cmd.BuildDate={{ .Date }}
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+      - arm
+    goarm:
+      - "7"
+    ignore:
+      - goos: windows
+        goarch: arm
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: default
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+      {{- if .Arm }}v{{ .Arm }}{{ end }}
+    files:
+      - LICENSE*
+      - README*
+      - CHANGELOG*
+      - configs/example.yaml
+      - docs/*.md
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+sboms:
+  - artifacts: archive
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "^ci:"
+      - "merge conflict"
+      - Merge pull request
+      - Merge remote-tracking branch
+      - Merge branch
+  groups:
+    - title: "New Features"
+      regexp: '^.*?feat(\([[:word:]]+\))??!?:.+$'
+      order: 0
+    - title: "Bug Fixes"
+      regexp: '^.*?fix(\([[:word:]]+\))??!?:.+$'
+      order: 1
+    - title: "Performance Improvements"
+      regexp: '^.*?perf(\([[:word:]]+\))??!?:.+$'
+      order: 2
+    - title: "Refactors"
+      regexp: '^.*?refactor(\([[:word:]]+\))??!?:.+$'
+      order: 3
+    - title: Other Changes
+      order: 999
+
+release:
+  github:
+    owner: sgaunet
+    name: runrun
+  draft: false
+  prerelease: auto
+  name_template: "{{ .ProjectName }} v{{ .Version }}"
+  header: |
+    ## RunRun {{ .Version }}
+
+    Production-ready web-based task execution platform.
+
+    ### Installation
+
+    Download the appropriate binary for your platform below, extract it, and run:
+
+    ```bash
+    ./runrun server --config configs/example.yaml
+    ```
+
+source:
+  enabled: true
+  name_template: "{{ .ProjectName }}-{{ .Version }}-source"
+  format: tar.gz
+
+# gitea_urls:
+#   api: https://git.sylvlab.fr/api/v1
+#   download: https://git.sylvlab.fr
+#   # set to true if you use a self-signed certificate
+#   skip_tls_verify: false

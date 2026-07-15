@@ -1,48 +1,59 @@
+// Package csrf implements CSRF (Cross-Site Request Forgery) protection
+// using the double-submit cookie pattern: a token is set in a cookie and
+// must also be echoed back by the client in a header or form field on
+// state-changing requests.
 package csrf
 
 import (
 	"crypto/rand"
 	"encoding/base64"
+	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"sync"
 
 	apperrors "github.com/sgaunet/runrun/internal/errors"
 )
 
 const (
-	// TokenLength is the length of the CSRF token in bytes
+	// TokenLength is the length of the CSRF token in bytes.
 	TokenLength = 32
 
-	// TokenHeader is the header name for CSRF tokens
-	TokenHeader = "X-CSRF-Token"
+	// TokenHeader is the header name for CSRF tokens. Written in its
+	// canonical MIME header form; net/http canonicalizes incoming
+	// header names the same way, so this matches client requests that
+	// send "X-CSRF-Token" regardless of casing (HTTP header names are
+	// case-insensitive).
+	//nolint:gosec // G101: this is a header name constant, not a credential value
+	TokenHeader = "X-Csrf-Token"
 
-	// TokenFormField is the form field name for CSRF tokens
+	// TokenFormField is the form field name for CSRF tokens.
 	TokenFormField = "csrf_token"
 
-	// TokenCookie is the cookie name for CSRF tokens
+	// TokenCookie is the cookie name for CSRF tokens.
 	TokenCookie = "csrf_token"
 )
 
-// Protection provides CSRF protection functionality
+// Protection provides CSRF protection functionality.
 type Protection struct {
 	tokens map[string]string // session ID -> token
 	mu     sync.RWMutex
 }
 
-// New creates a new CSRF protection instance
+// New creates a new CSRF protection instance.
 func New() *Protection {
 	return &Protection{
 		tokens: make(map[string]string),
 	}
 }
 
-// GenerateToken generates a new CSRF token for a session
+// GenerateToken generates a new CSRF token for a session.
 func (p *Protection) GenerateToken(sessionID string) (string, error) {
 	// Generate random bytes
 	bytes := make([]byte, TokenLength)
 	if _, err := rand.Read(bytes); err != nil {
-		return "", err
+		return "", fmt.Errorf("generate csrf token: %w", err)
 	}
 
 	// Encode to base64
@@ -56,14 +67,14 @@ func (p *Protection) GenerateToken(sessionID string) (string, error) {
 	return token, nil
 }
 
-// GetToken retrieves the CSRF token for a session
+// GetToken retrieves the CSRF token for a session.
 func (p *Protection) GetToken(sessionID string) string {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	return p.tokens[sessionID]
 }
 
-// ValidateToken checks if a token is valid for a session
+// ValidateToken checks if a token is valid for a session.
 func (p *Protection) ValidateToken(sessionID, token string) bool {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
@@ -76,14 +87,14 @@ func (p *Protection) ValidateToken(sessionID, token string) bool {
 	return token == expectedToken
 }
 
-// DeleteToken removes a token for a session
+// DeleteToken removes a token for a session.
 func (p *Protection) DeleteToken(sessionID string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	delete(p.tokens, sessionID)
 }
 
-// Middleware creates HTTP middleware for CSRF protection
+// Middleware creates HTTP middleware for CSRF protection.
 func (p *Protection) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Skip CSRF check for safe methods
@@ -119,7 +130,7 @@ func (p *Protection) Middleware(next http.Handler) http.Handler {
 
 		// Validate token
 		if !p.ValidateToken(sessionID, token) {
-			log.Printf("[CSRF] Invalid CSRF token for session: %s", sessionID)
+			log.Printf("[CSRF] Invalid CSRF token for session: %s", strconv.Quote(sessionID))
 			apperrors.HandleError(w, r, apperrors.Forbidden("CSRF validation failed: invalid token"))
 			return
 		}
@@ -128,7 +139,7 @@ func (p *Protection) Middleware(next http.Handler) http.Handler {
 	})
 }
 
-// isSafeMethod returns true if the HTTP method is considered safe (no side effects)
+// isSafeMethod returns true if the HTTP method is considered safe (no side effects).
 func isSafeMethod(method string) bool {
 	return method == http.MethodGet ||
 		method == http.MethodHead ||
@@ -136,13 +147,18 @@ func isSafeMethod(method string) bool {
 		method == http.MethodTrace
 }
 
-// SetTokenCookie sets a CSRF token cookie
+// SetTokenCookie sets a CSRF token cookie.
 func (p *Protection) SetTokenCookie(w http.ResponseWriter, sessionID string) error {
 	token, err := p.GenerateToken(sessionID)
 	if err != nil {
 		return err
 	}
 
+	//nolint:gosec // G124: HttpOnly is intentionally false so client-side JS can
+	// read the token and echo it in TokenHeader/TokenFormField (double-submit
+	// cookie pattern); SameSite=Strict mitigates CSRF exposure from this. Secure
+	// is false to support non-TLS local/dev deployments, matching the same
+	// pre-existing tradeoff in internal/auth's session cookie.
 	http.SetCookie(w, &http.Cookie{
 		Name:     TokenCookie,
 		Value:    token,

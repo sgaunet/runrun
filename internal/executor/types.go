@@ -8,9 +8,10 @@ import (
 	"github.com/sgaunet/runrun/internal/config"
 )
 
-// ExecutionStatus represents the status of a task execution
+// ExecutionStatus represents the status of a task execution.
 type ExecutionStatus string
 
+// Possible values for ExecutionStatus across the lifecycle of an execution.
 const (
 	StatusPending   ExecutionStatus = "pending"
 	StatusQueued    ExecutionStatus = "queued"
@@ -21,7 +22,7 @@ const (
 	StatusTimeout   ExecutionStatus = "timeout"
 )
 
-// Execution represents a task execution instance
+// Execution represents a task execution instance.
 type Execution struct {
 	ID          string
 	TaskName    string
@@ -35,7 +36,7 @@ type Execution struct {
 	LogFilePath string
 }
 
-// StepExecution represents a single step execution
+// StepExecution represents a single step execution.
 type StepExecution struct {
 	Name       string
 	Command    string
@@ -48,14 +49,17 @@ type StepExecution struct {
 	Error      error
 }
 
-// TaskRequest represents a request to execute a task
+// TaskRequest represents a request to execute a task.
 type TaskRequest struct {
 	ExecutionID string
 	Task        *config.Task
-	Context     context.Context
+	// Context is the lifecycle context under which the task's steps run; it
+	// lets Shutdown cancel in-flight steps across the worker pool.
+	//nolint:containedctx // holds lifecycle context for graceful shutdown/cancellation
+	Context context.Context
 }
 
-// TaskExecutor manages task execution with worker pool
+// TaskExecutor manages task execution with worker pool.
 type TaskExecutor struct {
 	// Configuration
 	maxWorkers      int
@@ -67,8 +71,11 @@ type TaskExecutor struct {
 
 	// Worker management
 	workerWg sync.WaitGroup
-	ctx      context.Context
-	cancel   context.CancelFunc
+	// ctx is the executor's lifecycle context; cancelling it (via Shutdown)
+	// signals every worker goroutine to stop pulling new tasks.
+	//nolint:containedctx // holds lifecycle context for graceful shutdown/cancellation
+	ctx    context.Context
+	cancel context.CancelFunc
 
 	// State management
 	executions      map[string]*Execution
@@ -78,14 +85,14 @@ type TaskExecutor struct {
 	broadcaster LogBroadcaster
 }
 
-// StateManager interface for execution state tracking
+// StateManager interface for execution state tracking.
 type StateManager interface {
 	GetExecution(executionID string) (*Execution, error)
 	UpdateExecution(executionID string, execution *Execution) error
 	ListExecutions(taskName string) ([]*Execution, error)
 }
 
-// LogBroadcaster broadcasts log messages to connected clients in real-time
+// LogBroadcaster broadcasts log messages to connected clients in real-time.
 type LogBroadcaster interface {
 	BroadcastLog(executionID, logLine string)
 	BroadcastLogWithLevel(executionID, logLine, level string)
@@ -94,7 +101,7 @@ type LogBroadcaster interface {
 	FlushBuffer(executionID string)
 }
 
-// StepExecutor interface for executing individual steps
+// StepExecutor interface for executing individual steps.
 type StepExecutor interface {
 	ExecuteStep(ctx context.Context, step *config.Step, workingDir string, env map[string]string) (*StepExecution, error)
 }

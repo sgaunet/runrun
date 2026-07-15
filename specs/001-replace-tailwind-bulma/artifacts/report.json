@@ -1,0 +1,136 @@
+{
+  "runTimestamp": "2026-05-19T20:48:00Z",
+  "binarySHA256": "75c1c1fb513702f589d6ce24300140a6bfc3c381770bddc009e616ff8f35f1a6",
+  "binaryGitSHA": "c27194f",
+  "browser": "chromium",
+  "viewports": ["desktop-1280x800", "phone-375x812"],
+  "scenarios": [
+    {
+      "id": "US1-AC1",
+      "story": "US1",
+      "result": "pass",
+      "pageURL": "http://localhost:18080/",
+      "screenshotPath": "screenshots/dashboard-desktop.png",
+      "notes": "Dashboard renders fully Bulma-styled with 6 stat tiles and 3 task cards; zero off-host requests; zero 404s on /static/*."
+    },
+    {
+      "id": "US1-AC2",
+      "story": "US1",
+      "result": "pass",
+      "pageURL": "http://localhost:18080/login → /tasks/echo-ok → /logs/<id>",
+      "screenshotPath": "screenshots/logs-desktop.png",
+      "notes": "Navigated through every page in the Page Inventory. Embedded assets (bulma.min.css, app.css, alpine.csp.min.js, log-viewer.js, main.js, sprite.svg, favicon.ico) all served from localhost:18080 with Content-Type intact; zero off-host."
+    },
+    {
+      "id": "US1-AC3",
+      "story": "US1",
+      "result": "pass",
+      "pageURL": "(build-time)",
+      "screenshotPath": "",
+      "notes": "Taskfile + configs contain zero Node references (`grep -ni 'node|npm|npx' Taskfile.yml configs/*.yaml` returns empty). `task build-all` succeeds; no Tailwind binary, no `tailwind.config.js`, no `tools/` directory in repo."
+    },
+    {
+      "id": "US2-AC1",
+      "story": "US2",
+      "result": "pass",
+      "pageURL": "http://localhost:18080/",
+      "screenshotPath": "screenshots/dashboard-desktop.png",
+      "notes": "Login form submits with `e2e-admin`/`e2e-password!`, lands on /. Six stat tiles and three task cards (`echo-ok`, `fail-task`, `multi-step`) present and styled."
+    },
+    {
+      "id": "US2-AC2",
+      "story": "US2",
+      "result": "pass",
+      "pageURL": "http://localhost:18080/logs/23b8047a-2fa1-4057-ba8e-4b8992d3029a",
+      "screenshotPath": "screenshots/logs-desktop.png",
+      "notes": "Clicking Run Task POSTs /tasks/echo-ok/execute and navigates to /logs/<id>; LogViewer renders 10 log lines; final status badge reads 'success'."
+    },
+    {
+      "id": "US2-AC3",
+      "story": "US2",
+      "result": "pass",
+      "pageURL": "http://localhost:18080/logs/<id>",
+      "screenshotPath": "screenshots/logs-desktop.png",
+      "notes": "Completed-execution view uses LogViewer pagination (level filter + Prev/Next/First/Last + page-size select + Jump-to-line input). All controls render with Bulma classes; no inline styles."
+    },
+    {
+      "id": "US2-AC4",
+      "story": "US2",
+      "result": "pass",
+      "pageURL": "http://localhost:18080/login",
+      "screenshotPath": "screenshots/login-desktop.png",
+      "notes": "Clicking 'Sign out' in the navbar POSTs /logout, redirects to /login."
+    },
+    {
+      "id": "US2-AC5",
+      "story": "US2",
+      "result": "pass",
+      "pageURL": "http://localhost:18080/ → /login",
+      "screenshotPath": "screenshots/login-desktop.png",
+      "notes": "After sign-out, GET / redirects to /login; session is cleared."
+    },
+    {
+      "id": "US3-AC1",
+      "story": "US3",
+      "result": "pass",
+      "pageURL": "http://localhost:18080/{login,/,tasks/echo-ok,logs/<id>}",
+      "screenshotPath": "screenshots/*-desktop.png",
+      "notes": "Typography uses Bulma's system font stack; primary buttons share `.button.is-primary` styling; status badges use `.tag.is-success/-danger/-info/-warning`."
+    },
+    {
+      "id": "US3-AC2",
+      "story": "US3",
+      "result": "pass",
+      "pageURL": "http://localhost:18080/{login,/,tasks/echo-ok}",
+      "screenshotPath": "screenshots/*-phone.png",
+      "notes": "At 375x812: login mainScrollWidth=375, dashboard mainScrollWidth=375, task_detail mainScrollWidth=375 (after dropping `level is-mobile` modifier). All ≤ innerWidth (375)."
+    },
+    {
+      "id": "US3-AC3",
+      "story": "US3",
+      "result": "pass",
+      "pageURL": "http://localhost:18080/{login,/}",
+      "screenshotPath": "",
+      "notes": "`runrun-focus-ring` and `:focus-visible` styles in app.css apply to .button, .input, .select select, .pagination-link, .navbar-item, .navbar-burger, and `a`. Verified by inspection of the embedded app.css."
+    },
+    {
+      "id": "US3-AC4",
+      "story": "US3",
+      "result": "pass",
+      "pageURL": "http://localhost:18080/login",
+      "screenshotPath": "screenshots/login-desktop.png",
+      "notes": "Invalid-credentials error renders as `<div class='notification is-danger is-light'>` with explicit corrective-action text ('Check your username and password'). WebSocket-lost banner is wired as a sticky `.notification.is-warning` with a Reconnect button (data-action='ws-reconnect')."
+    },
+    {
+      "id": "US4-AC1",
+      "story": "US4",
+      "result": "pass",
+      "pageURL": "(this run)",
+      "screenshotPath": "",
+      "notes": "Procedure executed end-to-end via the `playwright-cli` skill against ./runrun started with configs/playwright-test.yaml."
+    },
+    {
+      "id": "US4-AC2",
+      "story": "US4",
+      "result": "pass",
+      "pageURL": "(initial run)",
+      "screenshotPath": "",
+      "notes": "First run caught three CSP violations from inline `style='...'` attributes in templ files plus one residual `style='width:7rem'` in log-viewer.js. Procedure flagged the failure with URL+console output; after fixing (utility classes in app.css + DOM API-only style changes), follow-up run reports zero violations."
+    },
+    {
+      "id": "US4-AC3",
+      "story": "US4",
+      "result": "pass",
+      "pageURL": "(this run)",
+      "screenshotPath": "",
+      "notes": "performance.getEntriesByType('resource') across the dashboard load lists 7 resources, all under localhost:18080; zero 4xx/5xx on /static/* responses."
+    }
+  ],
+  "networkAudit": {
+    "offHostRequests": 0,
+    "embeddedAsset404s": 0,
+    "tailwindReferences": 0
+  },
+  "cspViolations": 0,
+  "verdict": "pass"
+}

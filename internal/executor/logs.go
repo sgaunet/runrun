@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,19 +10,22 @@ import (
 	"time"
 )
 
-// LogEntry represents a single log entry
+// LogEntry represents a single log entry.
 type LogEntry struct {
 	Timestamp time.Time
 	Message   string
 }
 
-// ReadLogFile reads a log file and returns its contents
+// ReadLogFile reads a log file and returns its contents.
 func ReadLogFile(logFilePath string) ([]byte, error) {
 	if logFilePath == "" {
-		return nil, fmt.Errorf("log file path is empty")
+		return nil, ErrEmptyLogPath
 	}
 
-	content, err := os.ReadFile(logFilePath)
+	// logFilePath is always execution.LogFilePath, built internally by
+	// WriteLogFile from the configured log directory and an internally
+	// generated execution ID — not from external input.
+	content, err := os.ReadFile(logFilePath) //nolint:gosec // G304: path built from internal execution id within configured log dir
 	if err != nil {
 		return nil, fmt.Errorf("failed to read log file: %w", err)
 	}
@@ -29,7 +33,7 @@ func ReadLogFile(logFilePath string) ([]byte, error) {
 	return content, nil
 }
 
-// ListTaskLogs lists all log files for a task
+// ListTaskLogs lists all log files for a task.
 func ListTaskLogs(logDirectory, taskName string) ([]string, error) {
 	taskLogDir := filepath.Join(logDirectory, taskName)
 
@@ -65,13 +69,13 @@ func ListTaskLogs(logDirectory, taskName string) ([]string, error) {
 	return logFiles, nil
 }
 
-// GetLogFilePath returns the log file path for an execution
+// GetLogFilePath returns the log file path for an execution.
 func GetLogFilePath(logDirectory, taskName, executionID string) (string, error) {
 	taskLogDir := filepath.Join(logDirectory, taskName)
 
 	// Check if directory exists
 	if _, err := os.Stat(taskLogDir); os.IsNotExist(err) {
-		return "", fmt.Errorf("no logs found for task: %s", taskName)
+		return "", fmt.Errorf("%w: %s", ErrNoLogsForTask, taskName)
 	}
 
 	// Find log file with execution ID
@@ -81,8 +85,8 @@ func GetLogFilePath(logDirectory, taskName, executionID string) (string, error) 
 	}
 
 	executionIDShort := executionID
-	if len(executionIDShort) > 8 {
-		executionIDShort = executionIDShort[:8]
+	if len(executionIDShort) > executionIDShortLen {
+		executionIDShort = executionIDShort[:executionIDShortLen]
 	}
 
 	for _, entry := range entries {
@@ -94,10 +98,75 @@ func GetLogFilePath(logDirectory, taskName, executionID string) (string, error) 
 		}
 	}
 
-	return "", fmt.Errorf("log file not found for execution: %s", executionID)
+	return "", fmt.Errorf("%w: %s", ErrLogFileNotFound, executionID)
 }
 
-// TailLogFile returns the last N lines from a log file
+// CountFileLines counts the number of lines in a file efficiently.
+func CountFileLines(filePath string) (int, error) {
+	// filePath is always execution.LogFilePath, built internally by
+	// WriteLogFile from the configured log directory and an internally
+	// generated execution ID — not from external input.
+	f, err := os.Open(filePath) //nolint:gosec // G304: path built from internal execution id within configured log dir
+	if err != nil {
+		return 0, fmt.Errorf("failed to open file: %w", err)
+	}
+	defer func() {
+		_ = f.Close() // read-only file descriptor; nothing to flush, safe to ignore
+	}()
+
+	count := 0
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, scannerInitialBufferSize), scannerMaxLineSize)
+	for scanner.Scan() {
+		count++
+	}
+
+	if err := scanner.Err(); err != nil {
+		return count, fmt.Errorf("error reading file: %w", err)
+	}
+
+	return count, nil
+}
+
+// ReadLogSegment reads a range of lines from a log file in a single pass.
+// startLine is 0-indexed. Returns the lines, total line count, and any error.
+func ReadLogSegment(logFilePath string, startLine, count int) ([]string, int, error) {
+	if startLine < 0 {
+		startLine = 0
+	}
+
+	// logFilePath is always execution.LogFilePath, built internally by
+	// WriteLogFile from the configured log directory and an internally
+	// generated execution ID — not from external input.
+	f, err := os.Open(logFilePath) //nolint:gosec // G304: path built from internal execution id within configured log dir
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to open log file: %w", err)
+	}
+	defer func() {
+		_ = f.Close() // read-only file descriptor; nothing to flush, safe to ignore
+	}()
+
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, scannerInitialBufferSize), scannerMaxLineSize)
+
+	lines := make([]string, 0, count)
+	lineNum := 0
+
+	for scanner.Scan() {
+		if lineNum >= startLine && len(lines) < count {
+			lines = append(lines, scanner.Text())
+		}
+		lineNum++
+	}
+
+	if err := scanner.Err(); err != nil {
+		return lines, lineNum, fmt.Errorf("error reading log file: %w", err)
+	}
+
+	return lines, lineNum, nil
+}
+
+// TailLogFile returns the last N lines from a log file.
 func TailLogFile(logFilePath string, lines int) ([]string, error) {
 	content, err := ReadLogFile(logFilePath)
 	if err != nil {

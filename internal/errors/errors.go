@@ -1,3 +1,7 @@
+// Package errors provides application-level HTTP error types plus helpers
+// for logging them and writing standardized JSON error/success responses.
+// It is conventionally imported under the alias apperrors to avoid
+// shadowing the standard library errors package.
 package errors
 
 import (
@@ -7,11 +11,21 @@ import (
 	"log"
 	"net/http"
 	"runtime/debug"
+	"strconv"
 
 	"github.com/sgaunet/runrun/internal/ctxkeys"
 )
 
-// AppError represents an application error with HTTP context
+// HTTP status thresholds used to classify AppError severity for logging and
+// for deciding whether internal details may be exposed to clients.
+const (
+	// serverErrorThreshold is the lowest status code considered a server error (5xx).
+	serverErrorThreshold = 500
+	// clientErrorThreshold is the lowest status code considered a client error (4xx).
+	clientErrorThreshold = 400
+)
+
+// AppError represents an application error with HTTP context.
 type AppError struct {
 	Code       int    `json:"code"`
 	Message    string `json:"message"`
@@ -21,7 +35,7 @@ type AppError struct {
 	Err        error  `json:"-"` // Original error
 }
 
-// Error implements the error interface
+// Error implements the error interface.
 func (e *AppError) Error() string {
 	if e.Err != nil {
 		return fmt.Sprintf("%s: %v", e.Message, e.Err)
@@ -29,7 +43,7 @@ func (e *AppError) Error() string {
 	return e.Message
 }
 
-// ErrorResponse represents the JSON error response sent to clients
+// ErrorResponse represents the JSON error response sent to clients.
 type ErrorResponse struct {
 	Success   bool   `json:"success"`
 	Error     string `json:"error"`
@@ -48,6 +62,7 @@ func BadRequest(message string, err error) *AppError {
 	}
 }
 
+// Unauthorized creates a 401 Unauthorized error.
 func Unauthorized(message string) *AppError {
 	return &AppError{
 		Code:    http.StatusUnauthorized,
@@ -55,6 +70,7 @@ func Unauthorized(message string) *AppError {
 	}
 }
 
+// Forbidden creates a 403 Forbidden error.
 func Forbidden(message string) *AppError {
 	return &AppError{
 		Code:    http.StatusForbidden,
@@ -62,6 +78,7 @@ func Forbidden(message string) *AppError {
 	}
 }
 
+// NotFound creates a 404 Not Found error.
 func NotFound(message string) *AppError {
 	return &AppError{
 		Code:    http.StatusNotFound,
@@ -69,6 +86,7 @@ func NotFound(message string) *AppError {
 	}
 }
 
+// Conflict creates a 409 Conflict error.
 func Conflict(message string, err error) *AppError {
 	return &AppError{
 		Code:    http.StatusConflict,
@@ -77,6 +95,7 @@ func Conflict(message string, err error) *AppError {
 	}
 }
 
+// InternalError creates a 500 Internal Server Error.
 func InternalError(message string, err error) *AppError {
 	return &AppError{
 		Code:    http.StatusInternalServerError,
@@ -85,6 +104,7 @@ func InternalError(message string, err error) *AppError {
 	}
 }
 
+// ServiceUnavailable creates a 503 Service Unavailable error.
 func ServiceUnavailable(message string, err error) *AppError {
 	return &AppError{
 		Code:    http.StatusServiceUnavailable,
@@ -93,7 +113,7 @@ func ServiceUnavailable(message string, err error) *AppError {
 	}
 }
 
-// HandleError sends a properly formatted error response to the client
+// HandleError sends a properly formatted error response to the client.
 func HandleError(w http.ResponseWriter, r *http.Request, err error) {
 	var appErr *AppError
 
@@ -111,13 +131,18 @@ func HandleError(w http.ResponseWriter, r *http.Request, err error) {
 		}
 	}
 
-	// Log the error with full details (including stack trace for 5xx errors)
-	if appErr.Code >= 500 {
+	// Log the error with full details (including stack trace for 5xx errors).
+	// The method and path are attacker-controlled (a percent-encoded path may
+	// decode to contain control characters), so they are quoted via
+	// strconv.Quote before being written to the log to prevent log injection.
+	method, path := strconv.Quote(r.Method), strconv.Quote(r.URL.Path)
+	switch {
+	case appErr.Code >= serverErrorThreshold:
 		log.Printf("[ERROR] %s %s - Status: %d, Message: %s, Error: %v\n%s",
-			r.Method, r.URL.Path, appErr.Code, appErr.Message, appErr.Err, debug.Stack())
-	} else if appErr.Code >= 400 {
+			method, path, appErr.Code, appErr.Message, appErr.Err, debug.Stack())
+	case appErr.Code >= clientErrorThreshold:
 		log.Printf("[WARN] %s %s - Status: %d, Message: %s, Details: %s",
-			r.Method, r.URL.Path, appErr.Code, appErr.Message, appErr.Details)
+			method, path, appErr.Code, appErr.Message, appErr.Details)
 	}
 
 	// Prepare response
@@ -131,7 +156,7 @@ func HandleError(w http.ResponseWriter, r *http.Request, err error) {
 	}
 
 	// For internal server errors, don't expose internal details
-	if appErr.Code >= 500 {
+	if appErr.Code >= serverErrorThreshold {
 		response.Message = "An internal error occurred"
 		response.Details = ""
 	}
@@ -144,8 +169,8 @@ func HandleError(w http.ResponseWriter, r *http.Request, err error) {
 	}
 }
 
-// RespondJSON sends a successful JSON response
-func RespondJSON(w http.ResponseWriter, statusCode int, data interface{}) {
+// RespondJSON sends a successful JSON response.
+func RespondJSON(w http.ResponseWriter, statusCode int, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
 	if err := json.NewEncoder(w).Encode(data); err != nil {
@@ -154,15 +179,15 @@ func RespondJSON(w http.ResponseWriter, statusCode int, data interface{}) {
 	}
 }
 
-// SuccessResponse represents a successful API response
+// SuccessResponse represents a successful API response.
 type SuccessResponse struct {
-	Success bool        `json:"success"`
-	Message string      `json:"message,omitempty"`
-	Data    interface{} `json:"data,omitempty"`
+	Success bool   `json:"success"`
+	Message string `json:"message,omitempty"`
+	Data    any    `json:"data,omitempty"`
 }
 
-// RespondSuccess sends a standardized success response
-func RespondSuccess(w http.ResponseWriter, message string, data interface{}) {
+// RespondSuccess sends a standardized success response.
+func RespondSuccess(w http.ResponseWriter, message string, data any) {
 	RespondJSON(w, http.StatusOK, SuccessResponse{
 		Success: true,
 		Message: message,

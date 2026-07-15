@@ -268,6 +268,96 @@ func TestStreamBuffer_FlushOnMaxBytes(t *testing.T) {
 	}
 }
 
+// TestStreamBuffer_StopIsSynchronous verifies the ordering contract that
+// callers like Broadcaster.BroadcastComplete depend on: when Stop() returns,
+// every line ever Add()ed to this buffer has already been delivered through
+// flushFn. No sleep should be required to observe the flushed batches.
+//
+// Regression guard for the log-ordering bug where "[Execution completed: …]"
+// appeared mid-stream because the final buffer flush was still in a goroutine
+// when BroadcastComplete enqueued the complete message onto Hub.Broadcast.
+func TestStreamBuffer_StopIsSynchronous(t *testing.T) {
+	var mu sync.Mutex
+	var delivered []LogData
+
+	cfg := testConfig()
+	cfg.StreamBufferMaxLines = 3       // small so size-flush also fires
+	cfg.StreamBufferFlushInterval = 10 * time.Millisecond
+	buf := NewStreamBuffer(cfg, "exec-stop-sync", func(eid string, batch []LogData) {
+		// Simulate the cost of placing the batch on Hub.Broadcast; this
+		// widens the race window that the old `go flushFn(...)` code suffered.
+		time.Sleep(5 * time.Millisecond)
+		mu.Lock()
+		defer mu.Unlock()
+		delivered = append(delivered, batch...)
+	})
+
+	const total = 20
+	for i := 0; i < total; i++ {
+		buf.Add(LogData{Line: "L", Timestamp: time.Now()})
+	}
+	// Give the timer a chance to dispatch at least one async flush before Stop,
+	// so we also exercise the flushWg.Wait() path for in-flight batches.
+	time.Sleep(15 * time.Millisecond)
+
+	buf.Stop()
+
+	// No sleep here: Stop must return only after every line is delivered.
+	mu.Lock()
+	defer mu.Unlock()
+	if len(delivered) != total {
+		t.Fatalf("expected %d lines delivered before Stop returned, got %d", total, len(delivered))
+	}
+}
+
+// TestStreamBuffer_StopOrdersBeforeFollowupSend simulates the executor's
+// pattern: emit log lines, then Stop() the buffer, then send a follow-up
+// "complete" sentinel. The sentinel must end up after every log line in the
+// delivery order seen by downstream consumers.
+func TestStreamBuffer_StopOrdersBeforeFollowupSend(t *testing.T) {
+	var mu sync.Mutex
+	var order []string
+
+	cfg := testConfig()
+	cfg.StreamBufferMaxLines = 4
+	cfg.StreamBufferFlushInterval = 20 * time.Millisecond
+	buf := NewStreamBuffer(cfg, "exec-order", func(eid string, batch []LogData) {
+		// Slow flush widens the previously-racy window.
+		time.Sleep(3 * time.Millisecond)
+		mu.Lock()
+		defer mu.Unlock()
+		for _, l := range batch {
+			order = append(order, l.Line)
+		}
+	})
+
+	for i := 0; i < 10; i++ {
+		buf.Add(LogData{Line: "log", Timestamp: time.Now()})
+	}
+
+	buf.Stop()
+
+	// Caller's follow-up send must observe every log line as already delivered.
+	mu.Lock()
+	order = append(order, "complete")
+	snapshot := append([]string(nil), order...)
+	mu.Unlock()
+
+	if snapshot[len(snapshot)-1] != "complete" {
+		t.Fatalf("expected 'complete' to be last, got %q at end of %d items", snapshot[len(snapshot)-1], len(snapshot))
+	}
+	logCount := 0
+	for _, s := range snapshot[:len(snapshot)-1] {
+		if s != "log" {
+			t.Fatalf("expected only 'log' before 'complete', got %q", s)
+		}
+		logCount++
+	}
+	if logCount != 10 {
+		t.Fatalf("expected 10 'log' entries before 'complete', got %d", logCount)
+	}
+}
+
 func TestBroadcastBatch_SingleLine(t *testing.T) {
 	cfg := DefaultConfig()
 	hub := NewHub(cfg)

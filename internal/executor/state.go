@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// copyExecution creates a deep copy of an Execution to prevent race conditions
+// copyExecution creates a deep copy of an Execution to prevent race conditions.
 func copyExecution(src *Execution) *Execution {
 	if src == nil {
 		return nil
@@ -32,48 +32,59 @@ func copyExecution(src *Execution) *Execution {
 	if src.Steps != nil {
 		dst.Steps = make([]*StepExecution, len(src.Steps))
 		for i, step := range src.Steps {
-			if step != nil {
-				stepCopy := &StepExecution{
-					Name:      step.Name,
-					Command:   step.Command,
-					Status:    step.Status,
-					StartedAt: step.StartedAt,
-					Duration:  step.Duration,
-					ExitCode:  step.ExitCode,
-					Error:     step.Error,
-				}
-				// Deep copy FinishedAt pointer
-				if step.FinishedAt != nil {
-					finishedAt := *step.FinishedAt
-					stepCopy.FinishedAt = &finishedAt
-				}
-				// Deep copy Output slice
-				if step.Output != nil {
-					stepCopy.Output = make([]byte, len(step.Output))
-					copy(stepCopy.Output, step.Output)
-				}
-				dst.Steps[i] = stepCopy
-			}
+			dst.Steps[i] = copyStepExecution(step)
 		}
 	}
 
 	return dst
 }
 
-// GetExecution retrieves an execution by ID
+// copyStepExecution creates a deep copy of a StepExecution to prevent race
+// conditions, returning nil when step is nil.
+func copyStepExecution(step *StepExecution) *StepExecution {
+	if step == nil {
+		return nil
+	}
+
+	stepCopy := &StepExecution{
+		Name:      step.Name,
+		Command:   step.Command,
+		Status:    step.Status,
+		StartedAt: step.StartedAt,
+		Duration:  step.Duration,
+		ExitCode:  step.ExitCode,
+		Error:     step.Error,
+	}
+
+	// Deep copy FinishedAt pointer
+	if step.FinishedAt != nil {
+		finishedAt := *step.FinishedAt
+		stepCopy.FinishedAt = &finishedAt
+	}
+
+	// Deep copy Output slice
+	if step.Output != nil {
+		stepCopy.Output = make([]byte, len(step.Output))
+		copy(stepCopy.Output, step.Output)
+	}
+
+	return stepCopy
+}
+
+// GetExecution retrieves an execution by ID.
 func (e *TaskExecutor) GetExecution(executionID string) (*Execution, error) {
 	e.executionsMutex.RLock()
 	defer e.executionsMutex.RUnlock()
 
 	execution, exists := e.executions[executionID]
 	if !exists {
-		return nil, fmt.Errorf("execution not found: %s", executionID)
+		return nil, fmt.Errorf("%w: %s", ErrExecutionNotFound, executionID)
 	}
 
 	return copyExecution(execution), nil
 }
 
-// ListExecutions returns all executions for a task
+// ListExecutions returns all executions for a task.
 func (e *TaskExecutor) ListExecutions(taskName string) ([]*Execution, error) {
 	e.executionsMutex.RLock()
 	defer e.executionsMutex.RUnlock()
@@ -88,7 +99,7 @@ func (e *TaskExecutor) ListExecutions(taskName string) ([]*Execution, error) {
 	return executions, nil
 }
 
-// updateExecutionStatus updates the status of an execution
+// updateExecutionStatus updates the status of an execution.
 func (e *TaskExecutor) updateExecutionStatus(executionID string, status ExecutionStatus) {
 	e.executionsMutex.Lock()
 	defer e.executionsMutex.Unlock()
@@ -98,7 +109,7 @@ func (e *TaskExecutor) updateExecutionStatus(executionID string, status Executio
 	}
 }
 
-// setExecutionStartTime sets the start time of an execution
+// setExecutionStartTime sets the start time of an execution.
 func (e *TaskExecutor) setExecutionStartTime(executionID string, startTime time.Time) {
 	e.executionsMutex.Lock()
 	defer e.executionsMutex.Unlock()
@@ -108,7 +119,7 @@ func (e *TaskExecutor) setExecutionStartTime(executionID string, startTime time.
 	}
 }
 
-// setExecutionFinishTime sets the finish time and calculates duration
+// setExecutionFinishTime sets the finish time and calculates duration.
 func (e *TaskExecutor) setExecutionFinishTime(executionID string, finishTime time.Time) {
 	e.executionsMutex.Lock()
 	defer e.executionsMutex.Unlock()
@@ -119,7 +130,7 @@ func (e *TaskExecutor) setExecutionFinishTime(executionID string, finishTime tim
 	}
 }
 
-// setExecutionError sets the error for an execution
+// setExecutionError sets the error for an execution.
 func (e *TaskExecutor) setExecutionError(executionID string, err error) {
 	e.executionsMutex.Lock()
 	defer e.executionsMutex.Unlock()
@@ -129,7 +140,7 @@ func (e *TaskExecutor) setExecutionError(executionID string, err error) {
 	}
 }
 
-// addStepExecution adds a step execution to an execution
+// addStepExecution adds a step execution to an execution.
 func (e *TaskExecutor) addStepExecution(executionID string, step *StepExecution) {
 	e.executionsMutex.Lock()
 	defer e.executionsMutex.Unlock()
@@ -139,7 +150,7 @@ func (e *TaskExecutor) addStepExecution(executionID string, step *StepExecution)
 	}
 }
 
-// getExecutionStatus gets the current status of an execution
+// getExecutionStatus gets the current status of an execution.
 func (e *TaskExecutor) getExecutionStatus(executionID string) ExecutionStatus {
 	e.executionsMutex.RLock()
 	defer e.executionsMutex.RUnlock()
@@ -151,7 +162,7 @@ func (e *TaskExecutor) getExecutionStatus(executionID string) ExecutionStatus {
 	return StatusPending
 }
 
-// setLogFilePath sets the log file path for an execution
+// setLogFilePath sets the log file path for an execution.
 func (e *TaskExecutor) setLogFilePath(executionID, logPath string) {
 	e.executionsMutex.Lock()
 	defer e.executionsMutex.Unlock()
@@ -161,7 +172,7 @@ func (e *TaskExecutor) setLogFilePath(executionID, logPath string) {
 	}
 }
 
-// GetLatestExecution returns the most recent execution for a task
+// GetLatestExecution returns the most recent execution for a task.
 func (e *TaskExecutor) GetLatestExecution(taskName string) (*Execution, error) {
 	e.executionsMutex.RLock()
 	defer e.executionsMutex.RUnlock()
@@ -176,13 +187,13 @@ func (e *TaskExecutor) GetLatestExecution(taskName string) (*Execution, error) {
 	}
 
 	if latest == nil {
-		return nil, fmt.Errorf("no executions found for task: %s", taskName)
+		return nil, fmt.Errorf("%w: %s", ErrNoExecutionsForTask, taskName)
 	}
 
 	return copyExecution(latest), nil
 }
 
-// TaskStats represents aggregated statistics for all tasks
+// TaskStats represents aggregated statistics for all tasks.
 type TaskStats struct {
 	Total   int
 	Running int
@@ -192,7 +203,7 @@ type TaskStats struct {
 	Idle    int
 }
 
-// GetStats returns aggregated statistics for all tasks
+// GetStats returns aggregated statistics for all tasks.
 func (e *TaskExecutor) GetStats() TaskStats {
 	e.executionsMutex.RLock()
 	defer e.executionsMutex.RUnlock()
@@ -210,6 +221,9 @@ func (e *TaskExecutor) GetStats() TaskStats {
 			stats.Failed++
 		case StatusQueued:
 			stats.Queued++
+		case StatusPending, StatusCancelled, StatusTimeout:
+			// Counted in stats.Total only; no dedicated bucket for these
+			// statuses today.
 		}
 	}
 
@@ -218,7 +232,7 @@ func (e *TaskExecutor) GetStats() TaskStats {
 	return stats
 }
 
-// GetTaskStatus returns the current status of a task based on its latest execution
+// GetTaskStatus returns the current status of a task based on its latest execution.
 func (e *TaskExecutor) GetTaskStatus(taskName string) string {
 	latest, err := e.GetLatestExecution(taskName)
 	if err != nil {
@@ -229,7 +243,7 @@ func (e *TaskExecutor) GetTaskStatus(taskName string) string {
 }
 
 // AddTestExecution adds an execution for testing purposes
-// This should only be used in tests
+// This should only be used in tests.
 func (e *TaskExecutor) AddTestExecution(executionID string, execution *Execution) {
 	e.executionsMutex.Lock()
 	defer e.executionsMutex.Unlock()

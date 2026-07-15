@@ -1,21 +1,36 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"regexp"
 	"strings"
 )
 
-// Regex patterns for environment variable expansion
+// Regex patterns for environment variable expansion.
 var (
-	// Matches ${VAR_NAME} or ${VAR_NAME:-default_value}
+	// Matches ${VAR_NAME} or ${VAR_NAME:-default_value}.
 	envVarPattern = regexp.MustCompile(`\$\{([A-Za-z0-9_]+)(?::-([^}]*))?\}`)
-	// Matches $VAR_NAME
+	// Matches $VAR_NAME.
 	simpleEnvVarPattern = regexp.MustCompile(`\$([A-Za-z0-9_]+)`)
 )
 
-// expandEnvVars expands environment variables in the configuration
+// Indices into the []string returned by regexp.FindStringSubmatch for
+// envVarPattern and simpleEnvVarPattern. Index 0 is always the full match.
+const (
+	// varNameSubmatchIndex is the index of the captured variable name.
+	varNameSubmatchIndex = 1
+	// defaultValueSubmatchIndex is the index of the captured default value
+	// (envVarPattern only; simpleEnvVarPattern has no default value group).
+	defaultValueSubmatchIndex = 2
+)
+
+// ErrUnresolvedEnvVars indicates one or more configuration fields still
+// contain an unresolved ${VAR_NAME} reference after expansion.
+var ErrUnresolvedEnvVars = errors.New("unresolved environment variables")
+
+// expandEnvVars expands environment variables in the configuration.
 func expandEnvVars(config *Config) {
 	// Expand server config
 	config.Server.LogDirectory = expandString(config.Server.LogDirectory)
@@ -46,22 +61,21 @@ func expandEnvVars(config *Config) {
 			step.Command = expandString(step.Command)
 		}
 	}
-
 }
 
-// expandString expands environment variables in a string
+// expandString expands environment variables in a string.
 func expandString(s string) string {
 	// First, expand ${VAR_NAME:-default} pattern
 	s = envVarPattern.ReplaceAllStringFunc(s, func(match string) string {
 		submatches := envVarPattern.FindStringSubmatch(match)
-		if len(submatches) < 2 {
+		if len(submatches) <= varNameSubmatchIndex {
 			return match
 		}
 
-		varName := submatches[1]
+		varName := submatches[varNameSubmatchIndex]
 		defaultValue := ""
-		if len(submatches) > 2 {
-			defaultValue = submatches[2]
+		if len(submatches) > defaultValueSubmatchIndex {
+			defaultValue = submatches[defaultValueSubmatchIndex]
 		}
 
 		value := os.Getenv(varName)
@@ -74,11 +88,11 @@ func expandString(s string) string {
 	// Then, expand simple $VAR_NAME pattern
 	s = simpleEnvVarPattern.ReplaceAllStringFunc(s, func(match string) string {
 		submatches := simpleEnvVarPattern.FindStringSubmatch(match)
-		if len(submatches) < 2 {
+		if len(submatches) <= varNameSubmatchIndex {
 			return match
 		}
 
-		varName := submatches[1]
+		varName := submatches[varNameSubmatchIndex]
 		value := os.Getenv(varName)
 		if value == "" {
 			return match // Keep original if not found
@@ -89,14 +103,14 @@ func expandString(s string) string {
 	return s
 }
 
-// ValidateEnvVars checks if all required environment variables are set
+// ValidateEnvVars checks if all required environment variables are set.
 func ValidateEnvVars(config *Config) error {
 	missing := []string{}
 
 	// Check all string fields for unresolved environment variables
 	checkString := func(s, context string) {
 		if strings.Contains(s, "${") && !envVarPattern.MatchString(s) {
-			missing = append(missing, fmt.Sprintf("%s contains unresolved variable", context))
+			missing = append(missing, context+" contains unresolved variable")
 		}
 	}
 
@@ -111,7 +125,7 @@ func ValidateEnvVars(config *Config) error {
 	}
 
 	if len(missing) > 0 {
-		return fmt.Errorf("unresolved environment variables:\n  - %s", strings.Join(missing, "\n  - "))
+		return fmt.Errorf("%w:\n  - %s", ErrUnresolvedEnvVars, strings.Join(missing, "\n  - "))
 	}
 
 	return nil

@@ -1,9 +1,13 @@
+// Package validation provides shared input validation and sanitization
+// helpers (usernames, passwords, task names, UUIDs, paths, and generic
+// string/enum constraints) used across RunRun's HTTP handlers.
 package validation
 
 import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"unicode"
 
@@ -11,13 +15,19 @@ import (
 )
 
 var (
-	// Common validation patterns
+	// Common validation patterns.
 	usernameRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]{3,32}$`)
 	taskNameRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,128}$`)
 	uuidRegex     = regexp.MustCompile(`^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$`)
 )
 
-// ValidateUsername validates a username
+// Password length constraints enforced by ValidatePassword.
+const (
+	minPasswordLength = 8
+	maxPasswordLength = 128
+)
+
+// ValidateUsername validates a username.
 func ValidateUsername(username string) error {
 	if username == "" {
 		return apperrors.BadRequest("Username is required", nil)
@@ -30,14 +40,14 @@ func ValidateUsername(username string) error {
 	return nil
 }
 
-// ValidatePassword validates a password
+// ValidatePassword validates a password.
 func ValidatePassword(password string) error {
-	if len(password) < 8 {
-		return apperrors.BadRequest("Password must be at least 8 characters long", nil)
+	if len(password) < minPasswordLength {
+		return apperrors.BadRequest(fmt.Sprintf("Password must be at least %d characters long", minPasswordLength), nil)
 	}
 
-	if len(password) > 128 {
-		return apperrors.BadRequest("Password must be less than 128 characters", nil)
+	if len(password) > maxPasswordLength {
+		return apperrors.BadRequest(fmt.Sprintf("Password must be less than %d characters", maxPasswordLength), nil)
 	}
 
 	// Check for at least one letter and one number
@@ -59,7 +69,7 @@ func ValidatePassword(password string) error {
 	return nil
 }
 
-// ValidateTaskName validates a task name
+// ValidateTaskName validates a task name.
 func ValidateTaskName(taskName string) error {
 	if taskName == "" {
 		return apperrors.BadRequest("Task name is required", nil)
@@ -72,7 +82,7 @@ func ValidateTaskName(taskName string) error {
 	return nil
 }
 
-// ValidateUUID validates a UUID string
+// ValidateUUID validates a UUID string.
 func ValidateUUID(id string) error {
 	if id == "" {
 		return apperrors.BadRequest("ID is required", nil)
@@ -85,7 +95,7 @@ func ValidateUUID(id string) error {
 	return nil
 }
 
-// SanitizePath prevents path traversal attacks
+// SanitizePath prevents path traversal attacks.
 func SanitizePath(path string) (string, error) {
 	// Remove any path traversal attempts
 	cleaned := filepath.Clean(path)
@@ -103,7 +113,7 @@ func SanitizePath(path string) (string, error) {
 	return cleaned, nil
 }
 
-// SanitizeString removes potentially dangerous characters
+// SanitizeString removes potentially dangerous characters.
 func SanitizeString(input string) string {
 	// Remove null bytes
 	input = strings.ReplaceAll(input, "\x00", "")
@@ -114,7 +124,7 @@ func SanitizeString(input string) string {
 	return input
 }
 
-// SanitizeHTML escapes HTML special characters
+// SanitizeHTML escapes HTML special characters.
 func SanitizeHTML(input string) string {
 	replacer := strings.NewReplacer(
 		"&", "&amp;",
@@ -126,7 +136,7 @@ func SanitizeHTML(input string) string {
 	return replacer.Replace(input)
 }
 
-// ValidateContentType checks if content type is allowed
+// ValidateContentType checks if content type is allowed.
 func ValidateContentType(contentType string, allowed []string) error {
 	contentType = strings.ToLower(strings.TrimSpace(contentType))
 
@@ -147,20 +157,20 @@ func ValidateContentType(contentType string, allowed []string) error {
 	)
 }
 
-// ValidateStringLength validates string length constraints
-func ValidateStringLength(value, fieldName string, min, max int) error {
+// ValidateStringLength validates string length constraints.
+func ValidateStringLength(value, fieldName string, minLen, maxLen int) error {
 	length := len(value)
 
-	if length < min {
+	if length < minLen {
 		return apperrors.BadRequest(
-			fmt.Sprintf("%s must be at least %d characters", fieldName, min),
+			fmt.Sprintf("%s must be at least %d characters", fieldName, minLen),
 			nil,
 		)
 	}
 
-	if max > 0 && length > max {
+	if maxLen > 0 && length > maxLen {
 		return apperrors.BadRequest(
-			fmt.Sprintf("%s must be less than %d characters", fieldName, max),
+			fmt.Sprintf("%s must be less than %d characters", fieldName, maxLen),
 			nil,
 		)
 	}
@@ -168,23 +178,21 @@ func ValidateStringLength(value, fieldName string, min, max int) error {
 	return nil
 }
 
-// ValidateRequired checks if a value is not empty
+// ValidateRequired checks if a value is not empty.
 func ValidateRequired(value, fieldName string) error {
 	if strings.TrimSpace(value) == "" {
 		return apperrors.BadRequest(
-			fmt.Sprintf("%s is required", fieldName),
+			fieldName+" is required",
 			nil,
 		)
 	}
 	return nil
 }
 
-// ValidateEnum checks if value is in allowed list
+// ValidateEnum checks if value is in allowed list.
 func ValidateEnum(value string, allowed []string, fieldName string) error {
-	for _, a := range allowed {
-		if value == a {
-			return nil
-		}
+	if slices.Contains(allowed, value) {
+		return nil
 	}
 
 	return apperrors.BadRequest(
@@ -193,12 +201,12 @@ func ValidateEnum(value string, allowed []string, fieldName string) error {
 	)
 }
 
-// ValidateExecutionID validates an execution ID format
+// ValidateExecutionID validates an execution ID format.
 func ValidateExecutionID(id string) error {
 	return ValidateUUID(id)
 }
 
-// ValidateQueryParam validates and sanitizes a query parameter
+// ValidateQueryParam validates and sanitizes a query parameter.
 func ValidateQueryParam(param, fieldName string, maxLength int) (string, error) {
 	// Sanitize
 	param = SanitizeString(param)

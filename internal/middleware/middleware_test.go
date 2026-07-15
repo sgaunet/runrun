@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -125,9 +127,16 @@ func TestSecurityHeadersMiddleware_AllHeaders(t *testing.T) {
 }
 
 func TestSecurityHeadersMiddleware_CSP(t *testing.T) {
-	handler := SecurityHeadersMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
+	// Exercise SecurityHeadersMiddleware behind CSPNonceMiddleware, as it
+	// always runs in production (see internal/server/server.go), so a real
+	// per-request nonce is present in the emitted policy.
+	var nonce string
+	handler := CSPNonceMiddleware(SecurityHeadersMiddleware(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			nonce = NonceFromContext(r.Context())
+			w.WriteHeader(http.StatusOK)
+		}),
+	))
 
 	req := httptest.NewRequest(http.MethodGet, "/test", nil)
 	w := httptest.NewRecorder()
@@ -135,11 +144,45 @@ func TestSecurityHeadersMiddleware_CSP(t *testing.T) {
 	handler.ServeHTTP(w, req)
 
 	csp := w.Header().Get("Content-Security-Policy")
+	assert.NotEmpty(t, nonce, "CSPNonceMiddleware must populate a nonce")
+
+	// Current intended strict policy (post Tailwind -> Bulma/Alpine.js CSP
+	// build migration): no 'unsafe-inline', no 'unsafe-eval', script-src
+	// gated by a per-request nonce.
 	assert.Contains(t, csp, "default-src 'self'")
-	assert.Contains(t, csp, "script-src 'self' 'unsafe-inline' 'unsafe-eval'")
-	assert.Contains(t, csp, "style-src 'self' 'unsafe-inline'")
+	assert.Contains(t, csp, "script-src 'self' 'nonce-"+nonce+"'")
+	assert.Contains(t, csp, "style-src 'self'")
 	assert.Contains(t, csp, "img-src 'self' data:")
+	assert.Contains(t, csp, "font-src 'self'")
+	assert.Contains(t, csp, "connect-src 'self'")
 	assert.Contains(t, csp, "frame-ancestors 'none'")
+	assert.Contains(t, csp, "base-uri 'self'")
+	assert.Contains(t, csp, "form-action 'self'")
+	assert.Contains(t, csp, "object-src 'none'")
+
+	// Security-critical invariants: the strict CSP must never regress to
+	// permitting inline scripts/styles or eval.
+	assert.NotContains(t, csp, "'unsafe-inline'")
+	assert.NotContains(t, csp, "'unsafe-eval'")
+}
+
+func TestSecurityHeadersMiddleware_CSPNoNonceInContext(t *testing.T) {
+	// SecurityHeadersMiddleware used without CSPNonceMiddleware in front
+	// (no nonce in context) must not emit a malformed, empty 'nonce-'
+	// source. It should omit the nonce source entirely and fall back to
+	// script-src 'self', which still blocks all inline scripts.
+	handler := SecurityHeadersMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+
+	csp := w.Header().Get("Content-Security-Policy")
+	assert.Contains(t, csp, "script-src 'self';", "script-src must fall back to 'self' only")
+	assert.NotContains(t, csp, "nonce-", "no nonce source should be emitted when no nonce is in context")
 }
 
 func TestSecurityHeadersMiddleware_NoHSTS_HTTP(t *testing.T) {
@@ -548,4 +591,105 @@ func TestLoggingMiddleware_WithRequestIDInvalid(t *testing.T) {
 	handler.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+// captureNonce wraps CSPNonceMiddleware and writes the per-request nonce
+// observed inside the handler into a string pointer for the test to assert
+// on.
+func captureNonce(out *string) http.Handler {
+	return CSPNonceMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		*out = NonceFromContext(r.Context())
+		w.WriteHeader(http.StatusOK)
+	}))
+}
+
+func TestCSPNonceMiddlewareGeneratesFreshNoncePerRequest(t *testing.T) {
+	var first, second string
+	handler := captureNonce(&first)
+
+	req1 := httptest.NewRequest(http.MethodGet, "/page", nil)
+	w1 := httptest.NewRecorder()
+	handler.ServeHTTP(w1, req1)
+
+	// Re-bind output pointer for a second request
+	handler = captureNonce(&second)
+	req2 := httptest.NewRequest(http.MethodGet, "/page", nil)
+	w2 := httptest.NewRecorder()
+	handler.ServeHTTP(w2, req2)
+
+	assert.NotEmpty(t, first, "nonce should be populated on the request context")
+	assert.NotEmpty(t, second)
+	assert.NotEqual(t, first, second, "each request must receive a distinct nonce")
+
+	// base64-url encoding of 16 bytes yields 22 chars (no padding). At minimum
+	// the nonce MUST have enough entropy to round-trip to ≥128 bits.
+	assert.GreaterOrEqual(t, len(first), 22)
+	assert.GreaterOrEqual(t, len(second), 22)
+	assert.Regexp(t, regexp.MustCompile(`^[A-Za-z0-9_-]+$`), first,
+		"nonce should be base64url-encoded (no padding)")
+}
+
+func TestNonceFromContextReturnsEmptyWhenAbsent(t *testing.T) {
+	assert.Equal(t, "", NonceFromContext(context.Background()))
+}
+
+// runSecurityHeaders runs SecurityHeadersMiddleware inside CSPNonceMiddleware
+// and returns the resulting CSP header on the response.
+func runSecurityHeaders(t *testing.T) (string, string) {
+	t.Helper()
+	chain := CSPNonceMiddleware(SecurityHeadersMiddleware(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}),
+	))
+	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+	w := httptest.NewRecorder()
+	chain.ServeHTTP(w, req)
+	csp := w.Header().Get("Content-Security-Policy")
+	return csp, w.Header().Get("X-Frame-Options")
+}
+
+func TestSecurityHeadersCSPExcludesUnsafeInline(t *testing.T) {
+	csp, _ := runSecurityHeaders(t)
+	assert.NotEmpty(t, csp, "Content-Security-Policy must be set")
+	assert.NotContains(t, csp, "'unsafe-inline'",
+		"strict CSP MUST NOT contain 'unsafe-inline'")
+}
+
+func TestSecurityHeadersCSPExcludesUnsafeEval(t *testing.T) {
+	csp, _ := runSecurityHeaders(t)
+	assert.NotContains(t, csp, "'unsafe-eval'",
+		"strict CSP MUST NOT contain 'unsafe-eval'")
+}
+
+func TestSecurityHeadersCSPContainsRequestNonce(t *testing.T) {
+	csp, xfo := runSecurityHeaders(t)
+	assert.Contains(t, csp, "script-src 'self' 'nonce-",
+		"script-src must use a nonce, not 'unsafe-inline'")
+	// Sanity check: other expected directives are present.
+	assert.Contains(t, csp, "default-src 'self'")
+	assert.Contains(t, csp, "object-src 'none'")
+	assert.Contains(t, csp, "frame-ancestors 'none'")
+	assert.Equal(t, "DENY", xfo)
+}
+
+func TestSecurityHeadersCSPNonceMatchesContextValue(t *testing.T) {
+	var observed string
+	chain := CSPNonceMiddleware(SecurityHeadersMiddleware(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			observed = NonceFromContext(r.Context())
+			w.WriteHeader(http.StatusOK)
+		}),
+	))
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	w := httptest.NewRecorder()
+	chain.ServeHTTP(w, req)
+
+	csp := w.Header().Get("Content-Security-Policy")
+	assert.NotEmpty(t, observed)
+	assert.True(t,
+		strings.Contains(csp, "'nonce-"+observed+"'"),
+		"the nonce in the CSP header must equal the one stored on the request context (got header %q, ctx %q)",
+		csp, observed,
+	)
 }

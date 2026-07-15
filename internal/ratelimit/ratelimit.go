@@ -1,16 +1,21 @@
+// Package ratelimit implements a simple per-IP sliding-window HTTP rate
+// limiter, used to throttle abusive clients (e.g. login brute-forcing).
 package ratelimit
 
 import (
-	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
 	apperrors "github.com/sgaunet/runrun/internal/errors"
 )
 
-// Limiter tracks rate limiting for IP addresses
+// cleanupInterval is how often stale visitor entries are purged.
+const cleanupInterval = 5 * time.Minute
+
+// Limiter tracks rate limiting for IP addresses.
 type Limiter struct {
 	visitors map[string]*Visitor
 	mu       sync.RWMutex
@@ -18,7 +23,7 @@ type Limiter struct {
 	window   time.Duration // time window for rate limiting
 }
 
-// Visitor tracks request counts for an IP address
+// Visitor tracks request counts for an IP address.
 type Visitor struct {
 	count     int
 	lastSeen  time.Time
@@ -42,25 +47,7 @@ func NewLimiter(rate int, window time.Duration) *Limiter {
 	return l
 }
 
-// getVisitor retrieves or creates a visitor entry for an IP
-func (l *Limiter) getVisitor(ip string) *Visitor {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	v, exists := l.visitors[ip]
-	if !exists {
-		v = &Visitor{
-			count:     0,
-			lastSeen:  time.Now(),
-			resetTime: time.Now().Add(l.window),
-		}
-		l.visitors[ip] = v
-	}
-
-	return v
-}
-
-// Allow checks if a request from the given IP should be allowed
+// Allow checks if a request from the given IP should be allowed.
 func (l *Limiter) Allow(ip string) bool {
 	v := l.getVisitor(ip)
 
@@ -85,7 +72,7 @@ func (l *Limiter) Allow(ip string) bool {
 	return true
 }
 
-// GetRetryAfter returns the duration until the rate limit resets for an IP
+// GetRetryAfter returns the duration until the rate limit resets for an IP.
 func (l *Limiter) GetRetryAfter(ip string) time.Duration {
 	v := l.getVisitor(ip)
 
@@ -99,9 +86,59 @@ func (l *Limiter) GetRetryAfter(ip string) time.Duration {
 	return time.Until(v.resetTime)
 }
 
-// cleanupVisitors periodically removes old visitor entries
+// Middleware creates an HTTP middleware for rate limiting.
+func (l *Limiter) Middleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ip := getClientIP(r)
+
+		if !l.Allow(ip) {
+			retryAfter := l.GetRetryAfter(ip)
+			retryAfterSeconds := formatDuration(retryAfter)
+
+			// ip and retryAfterSeconds are attacker-influenced (derived from
+			// request headers); quote them so a crafted value cannot forge
+			// additional log lines.
+			log.Printf("[RATELIMIT] Rate limit exceeded for IP: %s, retry after: %s seconds",
+				strconv.Quote(ip), strconv.Quote(retryAfterSeconds))
+
+			// Set Retry-After header
+			w.Header().Set("Retry-After", retryAfterSeconds)
+
+			err := apperrors.AppError{
+				Code:    http.StatusTooManyRequests,
+				Message: "Rate limit exceeded. Please try again later.",
+				Details: "Too many requests from your IP address. Please wait before trying again.",
+			}
+
+			apperrors.HandleError(w, r, &err)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+// getVisitor retrieves or creates a visitor entry for an IP.
+func (l *Limiter) getVisitor(ip string) *Visitor {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	v, exists := l.visitors[ip]
+	if !exists {
+		v = &Visitor{
+			count:     0,
+			lastSeen:  time.Now(),
+			resetTime: time.Now().Add(l.window),
+		}
+		l.visitors[ip] = v
+	}
+
+	return v
+}
+
+// cleanupVisitors periodically removes old visitor entries.
 func (l *Limiter) cleanupVisitors() {
-	ticker := time.NewTicker(5 * time.Minute)
+	ticker := time.NewTicker(cleanupInterval)
 	defer ticker.Stop()
 
 	for range ticker.C {
@@ -120,34 +157,7 @@ func (l *Limiter) cleanupVisitors() {
 	}
 }
 
-// Middleware creates an HTTP middleware for rate limiting
-func (l *Limiter) Middleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ip := getClientIP(r)
-
-		if !l.Allow(ip) {
-			retryAfter := l.GetRetryAfter(ip)
-
-			log.Printf("[RATELIMIT] Rate limit exceeded for IP: %s, retry after: %v", ip, retryAfter)
-
-			// Set Retry-After header
-			w.Header().Set("Retry-After", formatDuration(retryAfter))
-
-			err := apperrors.AppError{
-				Code:    http.StatusTooManyRequests,
-				Message: "Rate limit exceeded. Please try again later.",
-				Details: "Too many requests from your IP address. Please wait before trying again.",
-			}
-
-			apperrors.HandleError(w, r, &err)
-			return
-		}
-
-		next.ServeHTTP(w, r)
-	})
-}
-
-// getClientIP extracts the client IP from the request
+// getClientIP extracts the client IP from the request.
 func getClientIP(r *http.Request) string {
 	// Check X-Forwarded-For header (when behind a proxy)
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
@@ -164,11 +174,8 @@ func getClientIP(r *http.Request) string {
 	return r.RemoteAddr
 }
 
-// formatDuration formats a duration for the Retry-After header (in seconds)
+// formatDuration formats a duration for the Retry-After header (in seconds).
 func formatDuration(d time.Duration) string {
-	seconds := int(d.Seconds())
-	if seconds < 1 {
-		seconds = 1
-	}
-	return fmt.Sprintf("%d", seconds)
+	seconds := max(int(d.Seconds()), 1)
+	return strconv.Itoa(seconds)
 }

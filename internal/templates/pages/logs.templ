@@ -9,241 +9,198 @@ templ Logs(data LogsPageData) {
 }
 
 templ logsContent(data LogsPageData) {
-	<div class="py-6">
-		<div class="mb-6">
-			<a href={ templ.URL("/tasks/" + data.TaskName) } class="text-primary-600 hover:text-primary-700 flex items-center gap-1">
-				<span>&larr;</span>
-				<span>Back to Task</span>
-			</a>
-		</div>
-		<div class="mb-6">
-			<h2 class="text-3xl font-bold text-gray-900 mb-2">Execution Logs</h2>
-			<div class="flex flex-wrap gap-4 text-sm text-gray-600">
-				<div>
-					<span class="font-semibold">Execution ID:</span>
-					<code class="ml-2 bg-gray-100 px-2 py-1 rounded">{ data.ExecutionID }</code>
-				</div>
-				<div>
-					<span class="font-semibold">Task:</span>
-					<span class="ml-2">{ data.TaskName }</span>
-				</div>
-				<div>
-					<span class="font-semibold">Status:</span>
-					<span class={ "ml-2 status-badge", "status-" + data.Status }>{ data.Status }</span>
-				</div>
-			</div>
-		</div>
-		<!-- Action Buttons -->
-		<div class="mb-4">
-			<div class="flex gap-2 mb-2">
-				<button onclick="copyLogs()" class="btn btn-secondary text-sm">
-					<svg class="w-4 h-4 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
+	<section class="section pt-4">
+		<div class="container is-fluid">
+			<div class="mb-4">
+				<a href={ templ.URL("/tasks/" + data.TaskName) } class="has-text-link runrun-row--tight">
+					<svg class="runrun-icon runrun-icon--flip" aria-hidden="true">
+						<use href="/static/icons/sprite.svg#chevron-right"></use>
 					</svg>
-					Copy Logs
-				</button>
-				<a href={ templ.URL("/logs/" + data.ExecutionID + "/download") } class="btn btn-secondary text-sm">
-					<svg class="w-4 h-4 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
-					</svg>
-					Download
+					<span>Back to Task</span>
 				</a>
-				<button onclick="toggleAutoScroll()" id="autoScrollBtn" class="btn btn-secondary text-sm">
-					<svg class="w-4 h-4 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 13l-7 7-7-7m14-8l-7 7-7-7"></path>
-					</svg>
-					Auto-scroll: ON
-				</button>
 			</div>
-			<!-- Clipboard feedback message -->
-			<div id="clipboard-message" class="hidden p-2 rounded text-sm"></div>
+
+			<div class="level mb-4">
+				<div class="level-left">
+					<div>
+						<h2 class="title is-4">Execution Logs</h2>
+						<div class="tags has-addons mt-2">
+							<span class="tag is-dark">Execution</span>
+							<span class="tag"><code>{ data.ExecutionID }</code></span>
+						</div>
+					</div>
+				</div>
+				<div class="level-right">
+					<div class="tags has-addons">
+						<span class="tag is-dark">Task</span>
+						<span class="tag is-info">{ data.TaskName }</span>
+					</div>
+					<div class="tags has-addons ml-3">
+						<span class="tag is-dark">Status</span>
+						<span class={ "tag", "status-badge", "status-" + data.Status, statusTagInline(data.Status) }>
+							{ data.Status }
+						</span>
+					</div>
+				</div>
+			</div>
+
+			<div id="logViewerContainer"></div>
+			<div id="wsBanner" class="notification is-warning is-light runrun-ws-banner is-hidden">
+				<strong>Connection lost.</strong>
+				The log stream was interrupted; switched to polling.
+				<button class="button is-warning is-small ml-3" type="button" data-action="ws-reconnect">Reconnect now</button>
+			</div>
 		</div>
-		<div id="logViewerContainer"></div>
-	</div>
-	<script type="module" src="/static/js/vendor/ansi_up_loader.js"></script>
-	<script src="/static/js/log-viewer.js"></script>
-	@logsScript(data.ExecutionID)
+	</section>
+	<script type="module" src={ "/static/js/vendor/ansi_up_loader.js?v=" + data.BaseData.AssetVersion } nonce={ data.BaseData.CSPNonce }></script>
+	@logsScript(data.ExecutionID, data.Status)
 }
 
-// logsScript generates the logs viewer JavaScript with execution ID
-script logsScript(executionID string) {
-	const EXECUTION_ID = executionID;
+// logsScript wires the LogViewer to the WebSocket / pagination endpoints.
+// Emitted under the per-request CSP nonce via templ.WithNonce.
+script logsScript(executionID string, executionStatus string) {
+	(function () {
+		'use strict';
+		const EXECUTION_ID = executionID;
+		const EXECUTION_STATUS = executionStatus;
 
-	// Wait for AnsiUp to be loaded by the module before initializing
-	function initLogViewer() {
-		if (typeof window.AnsiUp === 'undefined') {
-			// AnsiUp not loaded yet, wait and retry
-			setTimeout(initLogViewer, 50);
-			return;
-		}
-
-		// Initialize log viewer
-		const logViewer = new LogViewer('logViewerContainer', {
-			autoScroll: true,
-			showLineNumbers: true,
-			showTimestamps: true
-		});
-
-		// Connect to WebSocket for real-time logs
-		const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-		const wsUrl = `${protocol}//${window.location.host}/logs/ws/${EXECUTION_ID}`;
-
-		let ws = null;
-		let reconnectAttempts = 0;
-		const maxReconnectAttempts = 5;
-
-		function connectWebSocket() {
-			ws = new WebSocket(wsUrl);
-
-			ws.onopen = () => {
-				console.log('WebSocket connected');
-				reconnectAttempts = 0;
-			};
-
-			ws.onmessage = (event) => {
-				try {
-					const message = JSON.parse(event.data);
-					if (message.type === 'metadata' && message.data) {
-						if (message.data.total_lines != null) {
-							logViewer.setTotalLines(message.data.total_lines);
-						}
-					} else if (message.type === 'log' && message.data) {
-						logViewer.addLine(message.data.line, {
-							timestamp: new Date(message.data.timestamp),
-							level: message.data.level
-						});
-					} else if (message.type === 'log_batch' && Array.isArray(message.data)) {
-						for (const entry of message.data) {
-							logViewer.addLine(entry.line, {
-								timestamp: new Date(entry.timestamp),
-								level: entry.level
-							});
-						}
-					} else if (message.type === 'complete' && message.data) {
-						// Update status badge on the page
-						const statusBadge = document.querySelector('.status-badge');
-						if (statusBadge) {
-							const oldStatus = statusBadge.textContent.trim();
-							const newStatus = message.data.status || 'unknown';
-							statusBadge.textContent = newStatus;
-							statusBadge.className = statusBadge.className.replace('status-' + oldStatus, 'status-' + newStatus);
-						}
-						// Stop reconnect attempts
-						reconnectAttempts = maxReconnectAttempts;
-						logViewer.addLine(`[Execution completed: ${message.data.status}]`, {
-							timestamp: new Date(),
-							level: 'info'
-						});
-					}
-				} catch (e) {
-					console.error('Failed to parse WebSocket message:', e);
-				}
-			};
-
-			ws.onerror = (error) => {
-				console.error('WebSocket error:', error);
-			};
-
-			ws.onclose = () => {
-				console.log('WebSocket closed');
-				if (reconnectAttempts < maxReconnectAttempts) {
-					reconnectAttempts++;
-					const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
-					console.log(`Reconnecting in ${delay}ms (attempt ${reconnectAttempts}/${maxReconnectAttempts})`);
-					setTimeout(connectWebSocket, delay);
-				} else {
-					console.log('Max reconnect attempts reached, falling back to polling');
-					startPolling();
-				}
-			};
-		}
-
-		// HTTP polling fallback
-		let pollInterval = null;
-		function startPolling() {
-			if (pollInterval) return;
-
-			pollInterval = setInterval(() => {
-				fetch(`/logs/${EXECUTION_ID}/poll?lines=100`)
-					.then(res => res.json())
-					.then(data => {
-						if (data.logs && data.logs.length > 0) {
-							logViewer.clear();
-							logViewer.addLines(data.logs);
-						}
-					})
-					.catch(err => console.error('Polling error:', err));
-			}, 3000);
-		}
-
-		// Show clipboard feedback message
-		function showClipboardMessage(message, isSuccess) {
-			const messageDiv = document.getElementById('clipboard-message');
-			if (messageDiv) {
-				messageDiv.textContent = message;
-				messageDiv.classList.remove('hidden', 'bg-red-50', 'text-red-700', 'bg-blue-50', 'text-blue-700');
-
-				if (isSuccess) {
-					messageDiv.classList.add('bg-blue-50', 'text-blue-700');
-				} else {
-					messageDiv.classList.add('bg-red-50', 'text-red-700');
-				}
-
-				// Auto-hide after 3 seconds
-				setTimeout(() => {
-					messageDiv.classList.add('hidden');
-				}, 3000);
-			}
-		}
-
-		// Copy logs to clipboard
-		window.copyLogs = function() {
-			const logsText = logViewer.getAllLinesAsText();
-			if (!logsText) {
-				showClipboardMessage('No logs to copy', false);
+		function initLogViewer() {
+			if (typeof window.AnsiUp === 'undefined' || !window.RunRun || !window.RunRun.LogViewer) {
+				setTimeout(initLogViewer, 50);
 				return;
 			}
 
-			navigator.clipboard.writeText(logsText)
-				.then(() => {
-					const btn = event.target.closest('button');
-					const originalText = btn.innerHTML;
-					btn.innerHTML = '<svg class="w-4 h-4 inline mr-1" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"></path></svg>Copied!';
-					setTimeout(() => {
-						btn.innerHTML = originalText;
-					}, 2000);
-				})
-				.catch(err => {
-					console.error('Failed to copy logs:', err);
-					showClipboardMessage('Failed to copy logs to clipboard', false);
-				});
+			const logViewer = new window.RunRun.LogViewer('logViewerContainer', {
+				autoScroll: true,
+				showLineNumbers: true,
+				showTimestamps: true,
+			});
+
+			const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+			const wsBaseUrl = protocol + '//' + window.location.host + '/logs/ws/' + EXECUTION_ID;
+			let ws = null;
+			let reconnectAttempts = 0;
+			const maxReconnectAttempts = 5;
+			let pollInterval = null;
+
+			function buildWsUrl() { return wsBaseUrl; }
+
+			function showWsBanner() {
+				const b = document.getElementById('wsBanner');
+				if (b) b.classList.remove('is-hidden');
+			}
+			function hideWsBanner() {
+				const b = document.getElementById('wsBanner');
+				if (b) b.classList.add('is-hidden');
+			}
+
+			function connectWebSocket() {
+				ws = new WebSocket(buildWsUrl());
+				ws.onopen = function () {
+					reconnectAttempts = 0;
+					hideWsBanner();
+				};
+				ws.onmessage = function (event) {
+					try {
+						const message = JSON.parse(event.data);
+						if (message.type === 'metadata' && message.data) {
+							if (message.data.total_lines != null) {
+								logViewer.setTotalLines(message.data.total_lines);
+							}
+						} else if (message.type === 'log' && message.data) {
+							logViewer.addLine(message.data.line, {
+								timestamp: new Date(message.data.timestamp),
+								level: message.data.level,
+							});
+						} else if (message.type === 'log_batch' && Array.isArray(message.data)) {
+							for (const entry of message.data) {
+								logViewer.addLine(entry.line, {
+									timestamp: new Date(entry.timestamp),
+									level: entry.level,
+								});
+							}
+						} else if (message.type === 'complete' && message.data) {
+							const statusBadge = document.querySelector('.status-badge');
+							if (statusBadge) {
+								const oldStatus = statusBadge.textContent.trim();
+								const newStatus = message.data.status || 'unknown';
+								statusBadge.textContent = newStatus;
+								statusBadge.className = statusBadge.className.replace('status-' + oldStatus, 'status-' + newStatus);
+							}
+							reconnectAttempts = maxReconnectAttempts;
+							logViewer.addLine('[Execution completed: ' + message.data.status + ']', {
+								timestamp: new Date(),
+								level: 'info',
+							});
+						}
+					} catch (e) {
+						console.error('Failed to parse WebSocket message:', e);
+					}
+				};
+				ws.onerror = function (error) { console.error('WebSocket error:', error); };
+				ws.onclose = function () {
+					if (reconnectAttempts < maxReconnectAttempts) {
+						reconnectAttempts++;
+						const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
+						showWsBanner();
+						setTimeout(connectWebSocket, delay);
+					} else {
+						showWsBanner();
+						startPolling();
+					}
+				};
+			}
+
+			function startPolling() {
+				if (pollInterval) return;
+				pollInterval = setInterval(function () {
+					fetch('/logs/' + EXECUTION_ID + '/poll?lines=100', { credentials: 'same-origin' })
+						.then(function (res) { return res.json(); })
+						.then(function (data) {
+							if (data.logs && data.logs.length > 0) {
+								logViewer.clear();
+								logViewer.addLines(data.logs);
+							}
+						})
+						.catch(function (err) { console.error('Polling error:', err); });
+				}, 3000);
+			}
+
+			const isCompleted =
+				EXECUTION_STATUS === 'success' ||
+				EXECUTION_STATUS === 'failed' ||
+				EXECUTION_STATUS === 'cancelled';
+
+			if (isCompleted) {
+				logViewer.enablePagination(EXECUTION_ID);
+			} else {
+				connectWebSocket();
+			}
+
+			// Manual reconnect button (data-action="ws-reconnect").
+			document.addEventListener('click', function (e) {
+				const t = e.target.closest('[data-action="ws-reconnect"]');
+				if (!t) return;
+				e.preventDefault();
+				if (ws) try { ws.close(); } catch (_) { /* ignore */ }
+				if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
+				reconnectAttempts = 0;
+				hideWsBanner();
+				connectWebSocket();
+			});
+
+			window.addEventListener('beforeunload', function () {
+				if (ws) ws.close();
+				if (pollInterval) clearInterval(pollInterval);
+			});
 		}
 
-		// Toggle auto-scroll
-		window.toggleAutoScroll = function() {
-			logViewer.options.autoScroll = !logViewer.options.autoScroll;
-			const btn = document.getElementById('autoScrollBtn');
-			btn.innerHTML = logViewer.options.autoScroll
-				? '<svg class="w-4 h-4 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 13l-7 7-7-7m14-8l-7 7-7-7"></path></svg>Auto-scroll: ON'
-				: '<svg class="w-4 h-4 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 13l-7 7-7-7m14-8l-7 7-7-7"></path></svg>Auto-scroll: OFF';
+		if (document.readyState === 'loading') {
+			document.addEventListener('DOMContentLoaded', initLogViewer);
+		} else {
+			initLogViewer();
 		}
-
-		// Start WebSocket connection
-		connectWebSocket();
-
-		// Cleanup on page unload
-		window.addEventListener('beforeunload', () => {
-			if (ws) ws.close();
-			if (pollInterval) clearInterval(pollInterval);
-		});
-	}
-
-	// Start initialization when DOM is ready
-	if (document.readyState === 'loading') {
-		document.addEventListener('DOMContentLoaded', initLogViewer);
-	} else {
-		initLogViewer();
-	}
+	}());
 }
 
 // LogsPageData contains data for the logs page

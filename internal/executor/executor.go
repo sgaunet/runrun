@@ -1,3 +1,8 @@
+// Package executor implements a worker-pool based engine for running task
+// definitions loaded from configuration. Tasks are queued for execution,
+// their steps run sequentially by a pool of goroutines, and execution state
+// and logs are tracked for later retrieval via the server and WebSocket
+// layers.
 package executor
 
 import (
@@ -10,7 +15,7 @@ import (
 	"github.com/sgaunet/runrun/internal/config"
 )
 
-// NewTaskExecutor creates a new task executor with worker pool
+// NewTaskExecutor creates a new task executor with worker pool.
 func NewTaskExecutor(maxWorkers int, logDirectory string, shutdownTimeout time.Duration) *TaskExecutor {
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -18,7 +23,7 @@ func NewTaskExecutor(maxWorkers int, logDirectory string, shutdownTimeout time.D
 		maxWorkers:      maxWorkers,
 		logDirectory:    logDirectory,
 		shutdownTimeout: shutdownTimeout,
-		taskQueue:       make(chan *TaskRequest, maxWorkers*2), // Buffer for smooth operation
+		taskQueue:       make(chan *TaskRequest, maxWorkers*taskQueueBufferMultiplier), // Buffer for smooth operation
 		ctx:             ctx,
 		cancel:          cancel,
 		executions:      make(map[string]*Execution),
@@ -30,16 +35,16 @@ func NewTaskExecutor(maxWorkers int, logDirectory string, shutdownTimeout time.D
 	return executor
 }
 
-// startWorkers initializes the worker pool
+// startWorkers initializes the worker pool.
 func (e *TaskExecutor) startWorkers() {
-	for i := 0; i < e.maxWorkers; i++ {
+	for i := range e.maxWorkers {
 		e.workerWg.Add(1)
 		go e.worker(i)
 	}
 	log.Printf("Started %d task executor workers", e.maxWorkers)
 }
 
-// worker processes tasks from the queue
+// worker processes tasks from the queue.
 func (e *TaskExecutor) worker(id int) {
 	defer e.workerWg.Done()
 	defer func() {
@@ -68,11 +73,11 @@ func (e *TaskExecutor) worker(id int) {
 	}
 }
 
-// SubmitTask submits a task for execution
+// SubmitTask submits a task for execution.
 func (e *TaskExecutor) SubmitTask(task *config.Task) (string, error) {
 	select {
 	case <-e.ctx.Done():
-		return "", fmt.Errorf("executor is shutting down")
+		return "", ErrExecutorShuttingDown
 	default:
 	}
 
@@ -108,11 +113,11 @@ func (e *TaskExecutor) SubmitTask(task *config.Task) (string, error) {
 	default:
 		// Queue is full
 		e.updateExecutionStatus(executionID, StatusFailed)
-		return "", fmt.Errorf("task queue is full, cannot accept new tasks")
+		return "", ErrQueueFull
 	}
 }
 
-// executeTask executes a task with all its steps
+// executeTask executes a task with all its steps.
 func (e *TaskExecutor) executeTask(req *TaskRequest) {
 	executionID := req.ExecutionID
 	task := req.Task
@@ -121,13 +126,9 @@ func (e *TaskExecutor) executeTask(req *TaskRequest) {
 	e.updateExecutionStatus(executionID, StatusRunning)
 	e.setExecutionStartTime(executionID, time.Now())
 
-	// Enable buffered streaming for this execution
+	// Enable buffered streaming and broadcast execution start
 	if e.broadcaster != nil {
 		e.broadcaster.EnableBuffering(executionID)
-	}
-
-	// Broadcast execution start
-	if e.broadcaster != nil {
 		e.broadcaster.BroadcastLogWithLevel(executionID,
 			fmt.Sprintf("Execution started: %s (ID: %s)", task.Name, executionID), "info")
 	}
@@ -139,25 +140,38 @@ func (e *TaskExecutor) executeTask(req *TaskRequest) {
 		executionID:  executionID,
 	}
 
-	// Execute steps sequentially
+	lastError := e.runTaskSteps(req.Context, stepExec, executionID, task)
+	finalStatus := e.finalizeExecution(executionID, lastError)
+
+	// Broadcast completion after setting final status and writing log file
+	if e.broadcaster != nil {
+		e.broadcaster.BroadcastComplete(executionID, string(finalStatus))
+	}
+
+	log.Printf("Task '%s' execution completed with status: %s (ID: %s)",
+		task.Name, e.getExecutionStatus(executionID), executionID)
+}
+
+// runTaskSteps executes a task's steps sequentially against ctx, broadcasting
+// progress as it goes, and returns the error from the first failing step (if
+// any). Execution stops at the first failure.
+func (e *TaskExecutor) runTaskSteps(
+	ctx context.Context, stepExec *DefaultStepExecutor, executionID string, task *config.Task,
+) error {
 	var lastError error
 	for i, step := range task.Steps {
 		log.Printf("Executing step %d/%d for task '%s': %s", i+1, len(task.Steps), task.Name, step.Name)
 
-		// Broadcast step start
 		if e.broadcaster != nil {
 			e.broadcaster.BroadcastLogWithLevel(executionID,
 				fmt.Sprintf("Step %d/%d: %s", i+1, len(task.Steps), step.Name), "info")
 		}
 
 		// Create context with timeout
-		stepCtx, cancel := context.WithTimeout(req.Context, task.Timeout)
-
-		// Execute step
+		stepCtx, cancel := context.WithTimeout(ctx, task.Timeout)
 		stepResult, err := stepExec.ExecuteStep(stepCtx, &step, task.WorkingDirectory, task.Environment)
 		cancel()
 
-		// Store step execution
 		e.addStepExecution(executionID, stepResult)
 
 		if err != nil {
@@ -173,8 +187,14 @@ func (e *TaskExecutor) executeTask(req *TaskRequest) {
 		log.Printf("Step '%s' completed successfully for task '%s'", step.Name, task.Name)
 	}
 
-	// Update final status
+	return lastError
+}
+
+// finalizeExecution records the final status of an execution, persists its
+// log file, and returns the resulting status.
+func (e *TaskExecutor) finalizeExecution(executionID string, lastError error) ExecutionStatus {
 	finishTime := time.Now()
+
 	var finalStatus ExecutionStatus
 	if lastError != nil {
 		finalStatus = StatusFailed
@@ -186,27 +206,20 @@ func (e *TaskExecutor) executeTask(req *TaskRequest) {
 	}
 	e.setExecutionFinishTime(executionID, finishTime)
 
-	// Write log file
 	execution, err := e.GetExecution(executionID)
 	if err == nil {
-		if err := WriteLogFile(execution, e.logDirectory); err != nil {
-			log.Printf("Failed to write log file for execution %s: %v", executionID, err)
+		if writeErr := WriteLogFile(execution, e.logDirectory); writeErr != nil {
+			log.Printf("Failed to write log file for execution %s: %v", executionID, writeErr)
 		} else {
 			e.setLogFilePath(executionID, execution.LogFilePath)
 			log.Printf("Log file written: %s", execution.LogFilePath)
 		}
 	}
 
-	// Broadcast completion after setting final status and writing log file
-	if e.broadcaster != nil {
-		e.broadcaster.BroadcastComplete(executionID, string(finalStatus))
-	}
-
-	log.Printf("Task '%s' execution completed with status: %s (ID: %s)",
-		task.Name, e.getExecutionStatus(executionID), executionID)
+	return finalStatus
 }
 
-// Shutdown gracefully shuts down the executor
+// Shutdown gracefully shuts down the executor.
 func (e *TaskExecutor) Shutdown() error {
 	log.Println("Shutting down task executor...")
 
@@ -229,21 +242,21 @@ func (e *TaskExecutor) Shutdown() error {
 		return nil
 	case <-time.After(e.shutdownTimeout):
 		log.Println("Worker shutdown timeout exceeded")
-		return fmt.Errorf("shutdown timeout exceeded")
+		return ErrShutdownTimeout
 	}
 }
 
-// SetBroadcaster sets the real-time log broadcaster
+// SetBroadcaster sets the real-time log broadcaster.
 func (e *TaskExecutor) SetBroadcaster(b LogBroadcaster) {
 	e.broadcaster = b
 }
 
-// GetQueueDepth returns the current queue depth
+// GetQueueDepth returns the current queue depth.
 func (e *TaskExecutor) GetQueueDepth() int {
 	return len(e.taskQueue)
 }
 
-// GetQueueCapacity returns the queue capacity
+// GetQueueCapacity returns the queue capacity.
 func (e *TaskExecutor) GetQueueCapacity() int {
 	return cap(e.taskQueue)
 }

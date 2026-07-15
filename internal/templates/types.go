@@ -1,21 +1,24 @@
+// Package templates defines the view-model data structures passed to the
+// templ-generated HTML templates.
 package templates
 
 import "time"
 
-// BaseData contains data available to all templates
+// BaseData contains data available to all templates.
 type BaseData struct {
 	Title       string
 	CurrentUser string
 	CSRFToken   string
 }
 
-// LoginPageData contains data for the login page
+// LoginPageData contains data for the login page.
 type LoginPageData struct {
 	BaseData
+
 	Error string
 }
 
-// TaskCard represents a task card for display
+// TaskCard represents a task card for display.
 type TaskCard struct {
 	Name        string
 	Description string
@@ -25,7 +28,7 @@ type TaskCard struct {
 	Duration    string
 }
 
-// DashboardStats represents dashboard statistics
+// DashboardStats represents dashboard statistics.
 type DashboardStats struct {
 	TotalTasks      int
 	RunningTasks    int
@@ -36,14 +39,15 @@ type DashboardStats struct {
 	TotalExecutions int
 }
 
-// DashboardPageData contains data for the dashboard page
+// DashboardPageData contains data for the dashboard page.
 type DashboardPageData struct {
 	BaseData
+
 	Tasks []TaskCard
 	Stats DashboardStats
 }
 
-// ExecutionInfo represents an execution for display
+// ExecutionInfo represents an execution for display.
 type ExecutionInfo struct {
 	ID         string
 	Status     string
@@ -52,9 +56,10 @@ type ExecutionInfo struct {
 	Duration   string
 }
 
-// TaskDetailPageData contains data for the task detail page
+// TaskDetailPageData contains data for the task detail page.
 type TaskDetailPageData struct {
 	BaseData
+
 	TaskName    string
 	Description string
 	Tags        []string

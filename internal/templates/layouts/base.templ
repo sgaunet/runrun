@@ -9,26 +9,32 @@ templ Base(data BaseData, content templ.Component) {
 			<meta charset="UTF-8"/>
 			<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 			<meta name="description" content="RunRun - Task execution platform"/>
+			<meta name="csrf-token" content={ data.CSRFToken }/>
 			<title>{ data.Title } - RunRun</title>
 			<link rel="icon" type="image/x-icon" href="/static/favicon.ico"/>
-			<link rel="stylesheet" href="/static/css/styles.css"/>
+			<link rel="stylesheet" href={ "/static/css/bulma.min.css?v=" + data.AssetVersion }/>
+			<link rel="stylesheet" href={ "/static/css/app.css?v=" + data.AssetVersion }/>
 		</head>
 		<body>
 			if data.CurrentUser != "" {
 				@components.Header(data.CurrentUser)
 			}
-			<main class="container">
+			<main>
 				@content
 			</main>
 			@components.Footer()
-			<script src="/static/js/main.js"></script>
+			<script src={ "/static/js/vendor/alpine.csp.min.js?v=" + data.AssetVersion } nonce={ data.CSPNonce } defer></script>
+			<script src={ "/static/js/log-viewer.js?v=" + data.AssetVersion } nonce={ data.CSPNonce } defer></script>
+			<script src={ "/static/js/main.js?v=" + data.AssetVersion } nonce={ data.CSPNonce } defer></script>
 		</body>
 	</html>
 }
 
 // BaseData contains data available to all templates
 type BaseData struct {
-	Title       string
-	CurrentUser string
-	CSRFToken   string
+	Title        string
+	CurrentUser  string
+	CSRFToken    string
+	CSPNonce     string
+	AssetVersion string
 }

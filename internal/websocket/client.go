@@ -2,13 +2,15 @@ package websocket
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/gorilla/websocket"
 )
 
-// NewClient creates a new WebSocket client
+// NewClient creates a new WebSocket client.
 func NewClient(hub *Hub, conn *websocket.Conn, id string, config *Config) *Client {
 	return &Client{
 		ID:            id,
@@ -20,14 +22,14 @@ func NewClient(hub *Hub, conn *websocket.Conn, id string, config *Config) *Clien
 	}
 }
 
-// ReadPump pumps messages from the WebSocket connection to the hub
+// ReadPump pumps messages from the WebSocket connection to the hub.
 func (c *Client) ReadPump(config *Config) {
 	defer func() {
 		if r := recover(); r != nil {
-			log.Printf("Panic recovered in ReadPump for client %s: %v", c.ID, r)
+			log.Printf("Panic recovered in ReadPump for client %s: %s", sanitizeLogValue(c.ID), sanitizeLogValue(r))
 		}
 		c.Hub.Unregister <- c
-		c.Conn.Close()
+		_ = c.Conn.Close() // best-effort close; connection is already being torn down
 	}()
 
 	_ = c.Conn.SetReadDeadline(time.Now().Add(config.PongTimeout))
@@ -52,15 +54,15 @@ func (c *Client) ReadPump(config *Config) {
 	}
 }
 
-// WritePump pumps messages from the hub to the WebSocket connection
+// WritePump pumps messages from the hub to the WebSocket connection.
 func (c *Client) WritePump(config *Config) {
 	ticker := time.NewTicker(config.PingInterval)
 	defer func() {
 		if r := recover(); r != nil {
-			log.Printf("Panic recovered in WritePump for client %s: %v", c.ID, r)
+			log.Printf("Panic recovered in WritePump for client %s: %s", sanitizeLogValue(c.ID), sanitizeLogValue(r))
 		}
 		ticker.Stop()
-		c.Conn.Close()
+		_ = c.Conn.Close() // best-effort close; connection is already being torn down
 	}()
 
 	for {
@@ -87,11 +89,11 @@ func (c *Client) WritePump(config *Config) {
 	}
 }
 
-// handleMessage processes incoming WebSocket messages
+// handleMessage processes incoming WebSocket messages.
 func (c *Client) handleMessage(data []byte) {
 	var msg Message
 	if err := json.Unmarshal(data, &msg); err != nil {
-		log.Printf("Error unmarshaling message from client %s: %v", c.ID, err)
+		log.Printf("Error unmarshaling message from client %s: %s", sanitizeLogValue(c.ID), sanitizeLogValue(err))
 		c.sendError("Invalid message format")
 		return
 	}
@@ -120,12 +122,19 @@ func (c *Client) handleMessage(data []byte) {
 	case MessageTypePong:
 		// Pong received, activity already updated
 
+	case MessageTypeLog, MessageTypeError, MessageTypePing, MessageTypeSubscribed,
+		MessageTypeUnsubscribed, MessageTypeComplete, MessageTypeLogBatch, MessageTypeMetadata:
+		// These message types are sent by the server to clients; a client is
+		// never expected to send them back. Fall through to the same
+		// "unknown type" handling as any other unrecognized value.
+		c.sendError("Unknown message type")
+
 	default:
 		c.sendError("Unknown message type")
 	}
 }
 
-// sendError sends an error message to the client
+// sendError sends an error message to the client.
 func (c *Client) sendError(errMsg string) {
 	msg := Message{
 		Type:      MessageTypeError,
@@ -135,7 +144,7 @@ func (c *Client) sendError(errMsg string) {
 	c.sendMessage(msg)
 }
 
-// sendSubscribed sends a subscription confirmation to the client
+// sendSubscribed sends a subscription confirmation to the client.
 func (c *Client) sendSubscribed(executionID string) {
 	msg := Message{
 		Type:        MessageTypeSubscribed,
@@ -145,7 +154,7 @@ func (c *Client) sendSubscribed(executionID string) {
 	c.sendMessage(msg)
 }
 
-// sendUnsubscribed sends an unsubscription confirmation to the client
+// sendUnsubscribed sends an unsubscription confirmation to the client.
 func (c *Client) sendUnsubscribed(executionID string) {
 	msg := Message{
 		Type:        MessageTypeUnsubscribed,
@@ -155,31 +164,50 @@ func (c *Client) sendUnsubscribed(executionID string) {
 	c.sendMessage(msg)
 }
 
-// sendMessage sends a message to the client
+// sendMessage sends a message to the client.
 func (c *Client) sendMessage(msg Message) {
 	data, err := json.Marshal(msg)
 	if err != nil {
-		log.Printf("Error marshaling message for client %s: %v", c.ID, err)
+		log.Printf("Error marshaling message for client %s: %s", sanitizeLogValue(c.ID), sanitizeLogValue(err))
 		return
 	}
 
 	select {
 	case c.Send <- data:
 	default:
-		log.Printf("Client %s send buffer full", c.ID)
+		log.Printf("Client %s send buffer full", sanitizeLogValue(c.ID))
 	}
 }
 
-// UpdateActivity updates the client's last activity timestamp
+// UpdateActivity updates the client's last activity timestamp.
 func (c *Client) UpdateActivity() {
 	c.ActivityMu.Lock()
 	c.LastActivity = time.Now()
 	c.ActivityMu.Unlock()
 }
 
-// GetLastActivity returns the client's last activity time
+// GetLastActivity returns the client's last activity time.
 func (c *Client) GetLastActivity() time.Time {
 	c.ActivityMu.RLock()
 	defer c.ActivityMu.RUnlock()
 	return c.LastActivity
+}
+
+// SetLevelFilter sets the log level filter for this client.
+// Pass nil to disable filtering (receive all levels).
+func (c *Client) SetLevelFilter(filter map[string]bool) {
+	c.FilterMu.Lock()
+	c.LevelFilter = filter
+	c.FilterMu.Unlock()
+}
+
+// sanitizeLogValue renders v as a string with CR/LF characters stripped
+// before it is interpolated into a log line. Values logged here (client IDs,
+// recovered panic values, unmarshal errors) can be influenced by data read
+// off the WebSocket connection, so this prevents log injection via embedded
+// newlines that could forge additional, fake log entries.
+func sanitizeLogValue(v any) string {
+	s := fmt.Sprint(v)
+	s = strings.ReplaceAll(s, "\r", "")
+	return strings.ReplaceAll(s, "\n", " ")
 }

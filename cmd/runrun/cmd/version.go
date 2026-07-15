@@ -8,11 +8,11 @@ import (
 )
 
 var (
-	// showDetailed controls whether to show detailed version information
+	// showDetailed controls whether to show detailed version information.
 	showDetailed bool
 )
 
-// versionCmd represents the version command
+// versionCmd represents the version command.
 var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "Show version information",
@@ -27,7 +27,7 @@ func init() {
 	versionCmd.Flags().BoolVarP(&showDetailed, "detailed", "d", false, "Show detailed version information")
 }
 
-func showVersion(cmd *cobra.Command, args []string) {
+func showVersion(_ *cobra.Command, _ []string) {
 	if showDetailed {
 		fmt.Printf("RunRun Task Execution Platform\n")
 		fmt.Printf("Version:     %s\n", Version)

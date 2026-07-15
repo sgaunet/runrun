@@ -1,6 +1,8 @@
+// Package cmd implements the RunRun CLI commands: server, hash-password, and version.
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -8,11 +10,14 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// errInvalidCost is returned when the requested BCrypt cost is out of range.
+var errInvalidCost = errors.New("invalid cost (must be 4-31)")
+
 var (
 	cost int
 )
 
-// hashPasswordCmd represents the hash-password command
+// hashPasswordCmd represents the hash-password command.
 var hashPasswordCmd = &cobra.Command{
 	Use:   "hash-password <password>",
 	Short: "Generate BCrypt hash for a password",
@@ -43,7 +48,7 @@ func init() {
 	hashPasswordCmd.Flags().IntVarP(&cost, "cost", "c", auth.DefaultCost, "BCrypt cost factor (4-31)")
 }
 
-func hashPassword(cmd *cobra.Command, args []string) error {
+func hashPassword(_ *cobra.Command, args []string) error {
 	password := args[0]
 
 	// Validate password strength
@@ -53,7 +58,7 @@ func hashPassword(cmd *cobra.Command, args []string) error {
 
 	// Validate cost parameter
 	if cost < 4 || cost > 31 {
-		return fmt.Errorf("invalid cost: %d (must be 4-31)", cost)
+		return fmt.Errorf("cost %d: %w", cost, errInvalidCost)
 	}
 
 	// Hash password
@@ -63,7 +68,9 @@ func hashPassword(cmd *cobra.Command, args []string) error {
 	}
 
 	// Output the hash
-	fmt.Fprintln(os.Stdout, hash)
+	if _, err := fmt.Fprintln(os.Stdout, hash); err != nil {
+		return fmt.Errorf("failed to write output: %w", err)
+	}
 
 	return nil
 }

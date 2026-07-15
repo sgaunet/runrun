@@ -1,0 +1,10 @@
+{
+    "editor.formatOnSave": true,
+    "editor.insertSpaces": false,
+    "editor.tabSize": 2
+    // "files.associations": {
+    //     "*.templ": "go",
+    //     "*.jsx": "javascript",
+    //     "Jenkinsfile*": "groovy"
+    //   }
+}

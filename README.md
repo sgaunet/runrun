@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.png" alt="RunRun Logo" width="400">
+</p>
+
 # RunRun
 
 **RunRun** is a web-based task execution platform written in Go that allows scheduling, executing, and monitoring shell command tasks through a modern web interface with real-time streaming updates.
@@ -10,27 +14,53 @@
 - 🛡️ **CSRF Protection** - Built-in CSRF token validation for state-changing operations
 - ⏱️ **Rate Limiting** - Configurable rate limiting to prevent abuse
 - 📝 **Task History** - Complete execution history with detailed logs and status tracking
-- 🎨 **Modern UI** - Clean, responsive web interface built with Templ and Tailwind CSS
+- 🎨 **Modern UI** - Clean, responsive web interface built with Templ and Bulma (all CSS, JS, and icons embedded in the single binary)
 - 🔄 **Concurrent Execution** - Worker pool-based concurrent task processing
 - 📁 **Log Management** - Automatic log file creation and management with tail support
 - 🔍 **Health Checks** - Built-in health and readiness endpoints for monitoring
+
+## Screenshots
+
+### Tasks Dashboard
+
+The landing page after login. Aggregate counters (total, running, success, failed, idle, executions)
+sit above a search box with status and tag filters, and every configured task gets a card showing its
+description, tags, last run time, duration, and last status — with **View** and **Run** actions.
+
+![Tasks Dashboard](docs/01-tasks-dashboard.png)
+
+### Task Detail
+
+Per-task view with the task description, tags, a **Run Task** button, and the full execution history:
+execution ID, status, start time, duration, and a link to the logs of each run.
+
+![Task Detail](docs/02-one-task.png)
+
+### Execution Logs
+
+Live log viewer for a single execution, streamed over WebSocket. Logs can be searched, filtered by
+level, cleared, copied, or downloaded, with a line counter and auto-scroll toggle. Each line is
+timestamped and shows step boundaries, commands, exit codes, and per-step durations.
+
+![Execution Logs](docs/03-task-log.png)
 
 ## Tech Stack
 
 - **Backend**: Go 1.25+ with Chi router
 - **Templating**: [Templ](https://templ.guide/) for type-safe HTML templates
-- **Styling**: Tailwind CSS with custom configuration
+- **Styling**: [Bulma 0.9.4](https://bulma.io/) (CSS-only) + [Alpine.js 3 (CSP build)](https://alpinejs.dev/) — vendored and embedded; no Node, no CDN
 - **Authentication**: JWT tokens with bcrypt password hashing
 - **Real-time**: WebSocket for live log streaming
-- **Testing**: Testify for comprehensive test coverage
+- **Testing**: Testify for comprehensive test coverage; assistant-driven browser validation via the `playwright-cli` skill (see `specs/001-replace-tailwind-bulma/quickstart.md`)
 
 ## Installation
 
 ### Prerequisites
 
 - Go 1.25 or higher
-- Node.js (for Tailwind CSS build)
+- [Task](https://taskfile.dev/) for build orchestration (`go install github.com/go-task/task/v3/cmd/task@latest`)
 - Git
+- **No Node.js, no npm, no npx.** All CSS, JS, and icons are vendored and embedded at build time.
 
 ### From Source
 
@@ -39,10 +69,11 @@
 git clone https://github.com/sgaunet/runrun.git
 cd runrun
 
-# Install development tools (templ CLI)
+# (Optional) Pre-build the templ tool — it's a version-pinned `tool` dependency
+# in go.mod (Go 1.24+), so `go tool templ` fetches/builds it automatically anyway
 task install-tools
 
-# Build everything (templates, CSS, and binary)
+# Build everything (templates, static-asset sync + audit, binary)
 task build-all
 
 # The binary will be in the current directory
@@ -174,24 +205,29 @@ tasks:
 ### Building from Source
 
 ```bash
-# Install development dependencies
+# (Optional) Pre-build the templ tool — it's a version-pinned `tool` dependency
+# in go.mod (Go 1.24+), so `go tool templ` fetches/builds it automatically anyway
 task install-tools
 
-# Generate template code from .templ files
+# Generate template code from .templ files (runs `go tool templ generate`)
 task generate
 
-# Build Tailwind CSS
-task build-css
+# Sync the dev static tree into the embed tree
+task sync-assets
 
-# Build the application
+# Verify required assets are present and no legacy artifacts remain
+task audit-assets
+
+# Build the application (runs generate + sync-assets + audit-assets implicitly)
 task build
 
 # Run all tests
 task test
-
-# Run with hot reload
-task watch
 ```
+
+See `specs/001-replace-tailwind-bulma/quickstart.md` for the full
+build/run/validate workflow and the assistant-driven browser
+validation procedure.
 
 ### Project Structure
 
@@ -200,17 +236,18 @@ runrun/
 ├── cmd/runrun/          # CLI application entry point
 ├── configs/             # Example configuration files
 ├── internal/
+│   ├── assets/         # //go:embed static asset filesystem (mirror of server/static)
 │   ├── auth/           # Authentication & authorization
 │   ├── config/         # Configuration management
 │   ├── csrf/           # CSRF protection
 │   ├── executor/       # Task execution engine
-│   ├── middleware/     # HTTP middleware
+│   ├── middleware/     # HTTP middleware (incl. per-request CSP nonce)
 │   ├── ratelimit/      # Rate limiting
-│   ├── server/         # HTTP server & handlers
+│   ├── server/
+│   │   └── static/     # Source of truth for embedded assets (Bulma + Alpine + app.css + sprite)
 │   ├── templates/      # Templ templates
 │   └── websocket/      # WebSocket hub & client management
-├── Taskfile.yml        # Task runner commands
-└── tailwind.config.js  # Tailwind CSS configuration
+└── Taskfile.yml        # Task runner commands (sync-assets, audit-assets, build, …)
 ```
 
 ### Testing
@@ -611,13 +648,17 @@ task generate
 task build
 ```
 
-#### CSS changes not appearing
+#### CSS or JS changes not appearing
 
-**Solution**: Rebuild Tailwind CSS:
+**Solution**: Re-sync the embed tree and rebuild:
 
 ```bash
-task build-css
+task sync-assets
+task build
 ```
+
+All static assets are embedded in the binary, so a rebuild is required
+for any change under `internal/server/static/` to take effect.
 
 ### Debug Mode
 
@@ -696,7 +737,8 @@ Contributions are welcome! Please follow these guidelines:
 git clone https://github.com/yourusername/runrun.git
 cd runrun
 
-# Install tools
+# (Optional) Install tools — templ is a version-pinned go.mod `tool` dependency,
+# so this step only pre-builds it; not required before running other tasks
 task install-tools
 
 # Run tests with coverage
@@ -727,5 +769,6 @@ task build
 
 - Built with [Chi](https://github.com/go-chi/chi) router
 - Templates with [Templ](https://templ.guide/)
-- Styled with [Tailwind CSS](https://tailwindcss.com/)
+- Styled with [Bulma](https://bulma.io/) + [Alpine.js (CSP build)](https://alpinejs.dev/)
 - WebSocket support via [Gorilla WebSocket](https://github.com/gorilla/websocket)
+- Icon glyphs derived from [Heroicons](https://heroicons.com/) (MIT)

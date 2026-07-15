@@ -1,0 +1,162 @@
+/* RunRun overrides on top of Bulma 0.9.4.
+ *
+ * The class allowlist is defined in
+ * specs/001-replace-tailwind-bulma/contracts/page-component-map.md.
+ * Anything outside the `runrun-*` namespace defined here OR the Bulma
+ * primitives listed in that contract is a contract violation.
+ */
+
+/* -------------------------------------------------------------------------
+ * Focus indicator (Constitution Principle IV / FR-007).
+ * A single shared focus ring applied via :focus-visible to every
+ * interactive element, regardless of whether the underlying Bulma
+ * class already styles focus. Uses the Bulma primary palette.
+ * --------------------------------------------------------------------- */
+
+.button:focus-visible,
+.input:focus-visible,
+.textarea:focus-visible,
+.select select:focus-visible,
+.checkbox:focus-visible,
+.radio:focus-visible,
+.pagination-link:focus-visible,
+.pagination-previous:focus-visible,
+.pagination-next:focus-visible,
+.navbar-item:focus-visible,
+.navbar-burger:focus-visible,
+a:focus-visible {
+  outline: 2px solid #485fc7;        /* bulma primary-dark, visible on white */
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px rgba(72, 95, 199, 0.25);
+}
+
+.runrun-focus-ring {
+  outline: 2px solid #485fc7;
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px rgba(72, 95, 199, 0.25);
+}
+
+/* -------------------------------------------------------------------------
+ * Log viewer.
+ * Dark, monospace, scrollable container; ANSI-coloured lines are produced
+ * by the embedded ansi_up vendor JS, so we only style the container and
+ * provide per-level row hints.
+ * --------------------------------------------------------------------- */
+
+.runrun-log-container {
+  background-color: #0d1117;
+  color: #e6edf3;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
+  font-size: 0.85rem;
+  line-height: 1.45;
+  padding: 1rem;
+  border-radius: 6px;
+  overflow: auto;
+  max-height: 70vh;
+  min-height: 12rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.runrun-log-line {
+  white-space: pre-wrap;
+  word-break: break-word;
+  display: block;
+}
+
+.runrun-log-line--debug { color: #8b949e; }
+.runrun-log-line--info  { color: #e6edf3; }
+.runrun-log-line--warn  { color: #d29922; }
+.runrun-log-line--error { color: #f85149; font-weight: 600; }
+
+/* -------------------------------------------------------------------------
+ * Status dot (used inline in dashboard stats and task cards).
+ * --------------------------------------------------------------------- */
+
+.runrun-status-dot {
+  display: inline-block;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  margin-right: 0.4rem;
+  vertical-align: middle;
+  background-color: currentColor;
+}
+
+/* -------------------------------------------------------------------------
+ * Screen-reader-only helper. Use sparingly (icon-only buttons get an
+ * <span class="runrun-sr-only">label</span> child for assistive tech).
+ * --------------------------------------------------------------------- */
+
+.runrun-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* -------------------------------------------------------------------------
+ * Icon helper. Every <svg> that references the embedded sprite gets the
+ * `runrun-icon` class so it sizes consistently and inherits text colour.
+ * --------------------------------------------------------------------- */
+
+.runrun-icon {
+  display: inline-block;
+  width: 1.1em;
+  height: 1.1em;
+  vertical-align: -0.15em;
+  fill: none;
+  stroke: currentColor;
+  flex-shrink: 0;
+}
+
+.runrun-icon--md { width: 1.4em; height: 1.4em; }
+.runrun-icon--lg { width: 2em;   height: 2em;   }
+
+/* -------------------------------------------------------------------------
+ * Empty / loading state media block (per research.md §8). Used by the
+ * dashboard "no tasks found" / "no tasks configured" state, the empty
+ * execution history on task detail, and similar layouts.
+ * --------------------------------------------------------------------- */
+
+.runrun-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 3rem 1rem;
+  color: #4a4a4a;
+}
+
+.runrun-empty-state__icon  { margin-bottom: 1rem; color: #b5b5b5; }
+.runrun-empty-state__title { font-size: 1.25rem; font-weight: 600; margin-bottom: 0.25rem; }
+.runrun-empty-state__help  { color: #7a7a7a; margin-bottom: 1rem; }
+
+/* -------------------------------------------------------------------------
+ * Small utility helpers. Used to avoid inline `style="..."` attributes,
+ * which are forbidden by the strict Content-Security-Policy.
+ * --------------------------------------------------------------------- */
+
+.runrun-row        { display: flex; align-items: center; gap: 0.5rem; }
+.runrun-row--tight { display: flex; align-items: center; gap: 0.35rem; }
+.runrun-row--small { display: flex; align-items: center; gap: 0.4rem; }
+.runrun-icon--flip { transform: rotate(180deg); }
+.runrun-w-jump     { width: 7rem; }
+
+/* -------------------------------------------------------------------------
+ * Sticky bottom WebSocket-reconnect notification (per research.md §8).
+ * --------------------------------------------------------------------- */
+
+.runrun-ws-banner {
+  position: sticky;
+  bottom: 0;
+  z-index: 30;
+  margin-top: 1rem;
+}

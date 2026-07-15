@@ -1,3 +1,6 @@
+// Package websocket implements the server-side WebSocket hub, client
+// connection lifecycle, and log-broadcasting used to stream task execution
+// logs to subscribed browser clients in real time.
 package websocket
 
 import (
@@ -17,7 +20,7 @@ type Broadcaster struct {
 	buffersMu sync.Mutex
 }
 
-// NewBroadcaster creates a new log broadcaster
+// NewBroadcaster creates a new log broadcaster.
 func NewBroadcaster(hub *Hub) *Broadcaster {
 	return &Broadcaster{
 		Hub:     hub,
@@ -122,7 +125,7 @@ func (b *Broadcaster) BroadcastComplete(executionID, status string) {
 	}
 }
 
-// HasSubscribers returns true if there are any subscribers for an execution
+// HasSubscribers returns true if there are any subscribers for an execution.
 func (b *Broadcaster) HasSubscribers(executionID string) bool {
 	return b.Hub.GetSubscriberCount(executionID) > 0
 }
@@ -150,8 +153,13 @@ func (b *Broadcaster) broadcastLogImmediate(executionID, logLine, level string) 
 		return
 	}
 
+	effectiveLevel := level
+	if effectiveLevel == "" {
+		effectiveLevel = string(LogLevelInfo)
+	}
 	b.Hub.Broadcast <- &BroadcastMessage{
 		ExecutionID: executionID,
 		Data:        data,
+		Level:       effectiveLevel,
 	}
 }

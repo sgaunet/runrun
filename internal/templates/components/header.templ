@@ -1,16 +1,41 @@
 package components
 
 templ Header(username string) {
-	<nav class="nav">
-		<div class="nav-container">
-			<a href="/" class="nav-brand">
-				RunRun
-			</a>
-			<div class="nav-links">
-				<span class="text-sm text-gray-600 hidden sm:inline">{ username }</span>
-				<form action="/logout" method="POST" class="inline">
-					<button type="submit" class="btn btn-secondary">Logout</button>
-				</form>
+	<nav class="navbar is-light is-spaced" role="navigation" aria-label="main navigation">
+		<div class="container">
+			<div class="navbar-brand">
+				<a href="/" class="navbar-item has-text-weight-bold is-size-5 has-text-primary">
+					RunRun
+				</a>
+				<a
+					role="button"
+					class="navbar-burger"
+					aria-label="menu"
+					aria-expanded="false"
+					data-action="toggle-burger"
+					data-target="runrun-navbar-menu"
+				>
+					<span aria-hidden="true"></span>
+					<span aria-hidden="true"></span>
+					<span aria-hidden="true"></span>
+				</a>
+			</div>
+			<div id="runrun-navbar-menu" class="navbar-menu">
+				<div class="navbar-start">
+					<a href="/" class="navbar-item">Dashboard</a>
+				</div>
+				<div class="navbar-end">
+					<div class="navbar-item">
+						<span class="has-text-grey is-size-7">Signed in as <strong>{ username }</strong></span>
+					</div>
+					<div class="navbar-item">
+						<form action="/logout" method="POST">
+							<button type="submit" class="button is-light is-small">
+								Sign out
+							</button>
+						</form>
+					</div>
+				</div>
 			</div>
 		</div>
 	</nav>

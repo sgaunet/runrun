@@ -20,3 +20,5 @@ linters:
     - tagliatelle
     - noinlineerr
     - ireturn
+    - gomodguard
+    - lll

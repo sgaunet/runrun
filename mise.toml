@@ -1,18 +1,6 @@
 [tools]
 go = "1.26.1"
-"github:go-task/task" = "latest"
-"github:golangci/golangci-lint" = "2.11.4"
-"aqua:docker/buildx" = "latest"
-docker-cli = "latest"
-docker-slim = "latest"
-
-[tasks.lint]
-run = "golangci-lint run ./..."
-
-[tasks.test-unit]
-# depends = ["lint"]
-run = "task tests"
-
-[tasks.build]
-depends = ["test-unit", "test-integration"]
-run = "go build ./..."
+task = "3.52.0"
+golangci-lint = "2.12.1"
+goreleaser = "2.16.0"
+syft = "1.45.1"

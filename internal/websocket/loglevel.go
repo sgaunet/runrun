@@ -4,9 +4,10 @@ import (
 	"strings"
 )
 
-// LogLevel represents a log severity level
+// LogLevel represents a log severity level.
 type LogLevel string
 
+// Recognized log severity levels, from least to most severe.
 const (
 	LogLevelDebug LogLevel = "debug"
 	LogLevelInfo  LogLevel = "info"
@@ -14,12 +15,12 @@ const (
 	LogLevelError LogLevel = "error"
 )
 
-// validLevels is the set of recognized log levels
+// validLevels is the set of recognized log levels.
 var validLevels = map[string]LogLevel{
-	"debug": LogLevelDebug,
-	"info":  LogLevelInfo,
-	"warn":  LogLevelWarn,
-	"error": LogLevelError,
+	string(LogLevelDebug): LogLevelDebug,
+	string(LogLevelInfo):  LogLevelInfo,
+	string(LogLevelWarn):  LogLevelWarn,
+	string(LogLevelError): LogLevelError,
 }
 
 // ParseLogLevel detects the log level from a log line.
@@ -35,33 +36,33 @@ func ParseLogLevel(line string) string {
 		substr string
 		level  string
 	}{
-		{"[error]", "error"},
-		{"[err]", "error"},
-		{"[fatal]", "error"},
-		{"[warn]", "warn"},
-		{"[warning]", "warn"},
-		{"[info]", "info"},
-		{"[debug]", "debug"},
-		{"[trace]", "debug"},
+		{"[error]", string(LogLevelError)},
+		{"[err]", string(LogLevelError)},
+		{"[fatal]", string(LogLevelError)},
+		{"[warn]", string(LogLevelWarn)},
+		{"[warning]", string(LogLevelWarn)},
+		{"[info]", string(LogLevelInfo)},
+		{"[debug]", string(LogLevelDebug)},
+		{"[trace]", string(LogLevelDebug)},
 		// Common structured log formats: level=error, level=ERROR
-		{"level=error", "error"},
-		{"level=fatal", "error"},
-		{"level=warn", "warn"},
-		{"level=warning", "warn"},
-		{"level=info", "info"},
-		{"level=debug", "debug"},
+		{"level=error", string(LogLevelError)},
+		{"level=fatal", string(LogLevelError)},
+		{"level=warn", string(LogLevelWarn)},
+		{"level=warning", string(LogLevelWarn)},
+		{"level=info", string(LogLevelInfo)},
+		{"level=debug", string(LogLevelDebug)},
 		// Space-separated: ERROR , WARN , etc.
-		{" error ", "error"},
-		{" fatal ", "error"},
-		{" warn ", "warn"},
-		{" warning ", "warn"},
+		{" error ", string(LogLevelError)},
+		{" fatal ", string(LogLevelError)},
+		{" warn ", string(LogLevelWarn)},
+		{" warning ", string(LogLevelWarn)},
 	} {
 		if strings.Contains(lower, pattern.substr) {
 			return pattern.level
 		}
 	}
 
-	return "info"
+	return string(LogLevelInfo)
 }
 
 // ParseLevelFilter parses a comma-separated level filter string into a set of levels.
@@ -73,7 +74,7 @@ func ParseLevelFilter(filter string) map[string]bool {
 	}
 
 	levels := make(map[string]bool)
-	for _, part := range strings.Split(filter, ",") {
+	for part := range strings.SplitSeq(filter, ",") {
 		part = strings.TrimSpace(part)
 		if _, ok := validLevels[part]; ok {
 			levels[part] = true
@@ -93,7 +94,7 @@ func MatchesFilter(level string, filter map[string]bool) bool {
 		return true
 	}
 	if level == "" {
-		level = "info"
+		level = string(LogLevelInfo)
 	}
 	return filter[level]
 }

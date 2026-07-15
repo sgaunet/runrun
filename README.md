@@ -69,7 +69,8 @@ timestamped and shows step boundaries, commands, exit codes, and per-step durati
 git clone https://github.com/sgaunet/runrun.git
 cd runrun
 
-# Install development tools (templ CLI)
+# (Optional) Pre-build the templ tool — it's a version-pinned `tool` dependency
+# in go.mod (Go 1.24+), so `go tool templ` fetches/builds it automatically anyway
 task install-tools
 
 # Build everything (templates, static-asset sync + audit, binary)
@@ -204,10 +205,11 @@ tasks:
 ### Building from Source
 
 ```bash
-# Install development dependencies
+# (Optional) Pre-build the templ tool — it's a version-pinned `tool` dependency
+# in go.mod (Go 1.24+), so `go tool templ` fetches/builds it automatically anyway
 task install-tools
 
-# Generate template code from .templ files
+# Generate template code from .templ files (runs `go tool templ generate`)
 task generate
 
 # Sync the dev static tree into the embed tree
@@ -735,7 +737,8 @@ Contributions are welcome! Please follow these guidelines:
 git clone https://github.com/yourusername/runrun.git
 cd runrun
 
-# Install tools
+# (Optional) Install tools — templ is a version-pinned go.mod `tool` dependency,
+# so this step only pre-builds it; not required before running other tasks
 task install-tools
 
 # Run tests with coverage

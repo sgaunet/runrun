@@ -47,14 +47,14 @@ tasks:
       - task: lint
 
   install-tools:
-    desc: "Install development tools (templ)"
+    desc: "Optional: pre-build the templ tool (already pinned in go.mod as a `tool` dependency; `go tool templ` fetches/builds it on demand otherwise)"
     cmds:
-      - go install github.com/a-h/templ/cmd/templ@latest
+      - go tool templ --version
 
   generate:
     desc: "Generate templ templates"
     cmds:
-      - templ generate
+      - go tool templ generate
 
   sync-assets:
     desc: "Sync internal/server/static/ -> internal/assets/static/ (byte-identical)"

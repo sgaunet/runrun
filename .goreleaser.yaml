@@ -4,9 +4,10 @@ project_name: runrun
 
 before:
   hooks:
-    # Templ-generated files are gitignored, so they must be regenerated here
-    - go install github.com/a-h/templ/cmd/templ@latest
-    - templ generate
+    # Templ-generated files are gitignored, so they must be regenerated here.
+    # templ is a version-pinned `tool` dependency in go.mod (go 1.24+), so no
+    # separate install step is needed — `go tool templ` builds/fetches it on demand.
+    - go tool templ generate
     # Mirror the dev static tree into the embed tree (Bulma + Alpine + sprite)
     - sh -c 'mkdir -p internal/assets/static && rsync -a --delete --exclude=.DS_Store internal/server/static/ internal/assets/static/'
     - go mod tidy

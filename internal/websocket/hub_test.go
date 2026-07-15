@@ -1,6 +1,7 @@
 package websocket
 
 import (
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -762,6 +763,7 @@ func TestHub_EvictIdleClients(t *testing.T) {
 	hub := NewHub(cfg)
 
 	go hub.Run()
+	t.Cleanup(hub.Stop)
 
 	client := &Client{
 		ID:            "idle-client",
@@ -772,27 +774,34 @@ func TestHub_EvictIdleClients(t *testing.T) {
 	}
 
 	hub.Register <- client
-	time.Sleep(50 * time.Millisecond)
 
-	// Verify registered
-	hub.ClientsMu.RLock()
-	_, exists := hub.Clients[client]
-	hub.ClientsMu.RUnlock()
-	assert.True(t, exists)
+	// The channel send only guarantees the Run loop *received* the client;
+	// registerClient() still has to acquire ClientsMu and populate the map on
+	// its own goroutine. Poll for that instead of assuming a fixed sleep is
+	// long enough - under -race/-count=2 and CPU contention from the rest of
+	// the suite, scheduling delays can exceed any fixed sleep.
+	require.Eventually(t, func() bool {
+		hub.ClientsMu.RLock()
+		defer hub.ClientsMu.RUnlock()
+		_, exists := hub.Clients[client]
+		return exists
+	}, time.Second, time.Millisecond, "client should have been registered")
 
 	// Make client idle by setting LastActivity in the past
 	client.ActivityMu.Lock()
 	client.LastActivity = time.Now().Add(-2 * cfg.IdleTimeout)
 	client.ActivityMu.Unlock()
 
-	// Wait for idle sweep (runs at IdleTimeout/2 = 25ms) plus processing time
-	time.Sleep(300 * time.Millisecond)
-
-	// Client should be evicted
-	hub.ClientsMu.RLock()
-	_, exists = hub.Clients[client]
-	hub.ClientsMu.RUnlock()
-	assert.False(t, exists, "idle client should have been evicted")
+	// Wait for the idle sweep (ticks every IdleTimeout/2) to evict the
+	// client. Poll with a generous bound rather than sleeping a fixed
+	// duration: the sweep interval is real wall-clock time, so under
+	// scheduling pressure a single fixed sleep is not reliably long enough.
+	assert.Eventually(t, func() bool {
+		hub.ClientsMu.RLock()
+		defer hub.ClientsMu.RUnlock()
+		_, exists := hub.Clients[client]
+		return !exists
+	}, 2*time.Second, 5*time.Millisecond, "idle client should have been evicted")
 }
 
 func TestHub_ActiveClientNotEvicted(t *testing.T) {
@@ -860,4 +869,119 @@ func TestDefaultConfig_NewFields(t *testing.T) {
 	cfg := DefaultConfig()
 	assert.Equal(t, 5*time.Minute, cfg.IdleTimeout)
 	assert.Equal(t, 10, cfg.MaxConnectionsPerExecution)
+}
+
+// TestHub_BroadcastToFullClientDoesNotDeadlock guards against a regression
+// where a subscriber whose Send buffer is full caused broadcastMessage (running
+// on the Run goroutine) to block forever on the unbuffered h.Unregister channel
+// that only the Run loop drains, wedging the entire hub.
+func TestHub_BroadcastToFullClientDoesNotDeadlock(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.IdleTimeout = 0 // disable the idle sweep; irrelevant here
+	hub := NewHub(cfg)
+
+	go hub.Run()
+	t.Cleanup(hub.Stop)
+
+	const executionID = "exec-full"
+
+	// A client whose Send buffer is size 1 and already full, so the broadcast's
+	// non-blocking send hits the default (buffer-full) branch.
+	full := &Client{
+		ID:            "full-client",
+		Hub:           hub,
+		Send:          make(chan []byte, 1),
+		Subscriptions: make(map[string]bool),
+		LastActivity:  time.Now(),
+	}
+	full.Send <- []byte("prefill")
+
+	hub.Register <- full
+	require.Eventually(t, func() bool {
+		hub.ClientsMu.RLock()
+		defer hub.ClientsMu.RUnlock()
+		_, ok := hub.Clients[full]
+		return ok
+	}, time.Second, time.Millisecond, "client should have registered")
+	hub.Subscribe(full, executionID)
+
+	// Broadcasting to the full client must evict it without deadlocking the hub.
+	hub.Broadcast <- &BroadcastMessage{ExecutionID: executionID, Data: []byte("hello")}
+
+	// The hub is still responsive if it processes a subsequent registration:
+	// a wedged Run loop would never pick this up.
+	probe := &Client{
+		ID:            "probe-client",
+		Hub:           hub,
+		Send:          make(chan []byte, 1),
+		Subscriptions: make(map[string]bool),
+		LastActivity:  time.Now(),
+	}
+	hub.Register <- probe
+	require.Eventually(t, func() bool {
+		hub.ClientsMu.RLock()
+		defer hub.ClientsMu.RUnlock()
+		_, ok := hub.Clients[probe]
+		return ok
+	}, 2*time.Second, 5*time.Millisecond, "hub deadlocked: probe client was never registered")
+
+	// The full client should have been evicted by the broadcast.
+	assert.Eventually(t, func() bool {
+		hub.ClientsMu.RLock()
+		defer hub.ClientsMu.RUnlock()
+		_, ok := hub.Clients[full]
+		return !ok
+	}, 2*time.Second, 5*time.Millisecond, "full client should have been evicted")
+}
+
+// TestHub_ShutdownWithConnectedClientsDoesNotDeadlock guards against a
+// regression where Hub.Shutdown() held ClientsMu while sending each client on
+// the unbuffered h.Unregister channel, whose Run-loop handler also needs
+// ClientsMu. That deadlocked graceful shutdown once more than one client was
+// connected: the Run loop blocked in unregisterClient waiting for the lock
+// while Shutdown blocked sending the next client, still holding it. Register
+// several clients so the second send is reached while the lock is held.
+func TestHub_ShutdownWithConnectedClientsDoesNotDeadlock(t *testing.T) {
+	hub := NewHub(nil)
+
+	go hub.Run()
+	t.Cleanup(hub.Stop)
+
+	clients := make([]*Client, 0, 5)
+	for i := range 5 {
+		c := &Client{
+			ID:            "connected-client-" + strconv.Itoa(i),
+			Hub:           hub,
+			Send:          make(chan []byte, 1),
+			Subscriptions: make(map[string]bool),
+			LastActivity:  time.Now(),
+		}
+		clients = append(clients, c)
+		hub.Register <- c
+	}
+	require.Eventually(t, func() bool {
+		hub.ClientsMu.RLock()
+		defer hub.ClientsMu.RUnlock()
+		return len(hub.Clients) == len(clients)
+	}, time.Second, time.Millisecond, "all clients should have registered")
+
+	done := make(chan struct{})
+	go func() {
+		hub.Shutdown()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// Shutdown returned without deadlocking. It routes unregistration
+		// through the Run loop, so clients are removed just after Shutdown
+		// returns rather than synchronously; poll for it.
+		assert.Eventually(t, func() bool {
+			hub.ClientsMu.RLock()
+			defer hub.ClientsMu.RUnlock()
+			return len(hub.Clients) == 0
+		}, time.Second, 5*time.Millisecond, "all clients should have been unregistered by Shutdown")
+	case <-time.After(2 * time.Second):
+		t.Fatal("Hub.Shutdown() deadlocked with connected clients")
+	}
 }

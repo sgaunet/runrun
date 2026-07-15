@@ -110,17 +110,29 @@ func (h *Hub) unregisterClient(client *Client) {
 
 // broadcastMessage sends a message to all clients subscribed to an execution
 func (h *Hub) broadcastMessage(message *BroadcastMessage) {
+	// Snapshot the subscriber set under the read lock. Iterating the map
+	// directly while Subscribe/Unsubscribe may mutate it from other goroutines
+	// would be a data race, and holding the lock across the sends below would
+	// serialize broadcasts against every subscription change.
 	h.SubscriptionsMu.RLock()
-	clients, ok := h.Subscriptions[message.ExecutionID]
-	h.SubscriptionsMu.RUnlock()
-
-	if !ok || len(clients) == 0 {
+	subs, ok := h.Subscriptions[message.ExecutionID]
+	if !ok || len(subs) == 0 {
+		h.SubscriptionsMu.RUnlock()
 		return
 	}
+	clients := make([]*Client, 0, len(subs))
+	for c := range subs {
+		clients = append(clients, c)
+	}
+	h.SubscriptionsMu.RUnlock()
 
-	// Send to all subscribed clients
-	var wg sync.WaitGroup
-	for client := range clients {
+	// Send to all subscribed clients.
+	var (
+		wg      sync.WaitGroup
+		evictMu sync.Mutex
+		toEvict []*Client
+	)
+	for _, client := range clients {
 		wg.Add(1)
 		go func(c *Client) {
 			defer wg.Done()
@@ -139,13 +151,27 @@ func (h *Hub) broadcastMessage(message *BroadcastMessage) {
 			case c.Send <- message.Data:
 				// Message sent successfully
 			default:
-				// Client's send channel is full, unregister the client
+				// Client's send channel is full. Record it for eviction after
+				// all sends finish; do NOT send on h.Unregister here. This
+				// method runs on the Run goroutine's stack (Run blocks in
+				// wg.Wait below), and h.Unregister is drained only by that same
+				// loop, so blocking on it would deadlock the hub.
 				log.Printf("Client %s send buffer full, unregistering", c.ID)
-				h.Unregister <- c
+				evictMu.Lock()
+				toEvict = append(toEvict, c)
+				evictMu.Unlock()
 			}
 		}(client)
 	}
 	wg.Wait()
+
+	// Every sender goroutine for this broadcast has returned, so nothing is
+	// still sending on these clients' Send channels; unregistering now (which
+	// closes Send) is safe. unregisterClient runs inline on the Run goroutine
+	// and does its own locking.
+	for _, c := range toEvict {
+		h.unregisterClient(c)
+	}
 }
 
 // evictIdleClients removes clients that have been idle beyond the timeout.
@@ -270,14 +296,32 @@ func (h *Hub) GetConfig() *Config {
 	return h.config
 }
 
-// Shutdown gracefully shuts down the hub
+// Shutdown gracefully shuts down the hub by unregistering every client.
+//
+// Unregistration is routed through h.Unregister so that unregisterClient runs
+// on the Run goroutine, serialized with broadcastMessage. Closing a client's
+// Send channel there (rather than directly from the caller) is what keeps it
+// from racing an in-flight broadcast sender, which would send on a closed
+// channel and panic. The client set is snapshotted first so ClientsMu is not
+// held across the channel sends: the original code held it and deadlocked,
+// because the Run loop's unregisterClient handler needs the same lock.
 func (h *Hub) Shutdown() {
-	h.ClientsMu.Lock()
-	defer h.ClientsMu.Unlock()
-
 	log.Println("Shutting down WebSocket hub...")
+
+	h.ClientsMu.RLock()
+	clients := make([]*Client, 0, len(h.Clients))
 	for client := range h.Clients {
-		h.Unregister <- client
+		clients = append(clients, client)
+	}
+	h.ClientsMu.RUnlock()
+
+	for _, client := range clients {
+		select {
+		case h.Unregister <- client:
+		case <-h.stop:
+			// Run loop has already exited; nothing will drain h.Unregister.
+			return
+		}
 	}
 }
 

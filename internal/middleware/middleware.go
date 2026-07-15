@@ -103,13 +103,19 @@ func SecurityHeadersMiddleware(next http.Handler) http.Handler {
 		//   - no 'unsafe-inline' in script-src or style-src
 		//   - no 'unsafe-eval' in script-src
 		//   - script-src uses a per-request nonce supplied by CSPNonceMiddleware
-		// The nonce is empty only if CSPNonceMiddleware has not run for this
-		// request (e.g. health endpoints that opt out); in that case the
-		// resulting policy still blocks inline scripts because the nonce
-		// directive matches nothing.
+		// If CSPNonceMiddleware has not run for this request (e.g. a handler
+		// wired up outside the standard middleware chain), no nonce is
+		// available. The nonce source is omitted entirely in that case rather
+		// than emitted as an empty, spec-invalid 'nonce-' token; script-src
+		// then falls back to 'self' only, which still blocks all inline
+		// scripts.
 		nonce := NonceFromContext(r.Context())
+		scriptSrc := "script-src 'self'"
+		if nonce != "" {
+			scriptSrc += " 'nonce-" + nonce + "'"
+		}
 		csp := "default-src 'self'; " +
-			"script-src 'self' 'nonce-" + nonce + "'; " +
+			scriptSrc + "; " +
 			"style-src 'self'; " +
 			"img-src 'self' data:; " +
 			"font-src 'self'; " +

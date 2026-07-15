@@ -127,9 +127,16 @@ func TestSecurityHeadersMiddleware_AllHeaders(t *testing.T) {
 }
 
 func TestSecurityHeadersMiddleware_CSP(t *testing.T) {
-	handler := SecurityHeadersMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
+	// Exercise SecurityHeadersMiddleware behind CSPNonceMiddleware, as it
+	// always runs in production (see internal/server/server.go), so a real
+	// per-request nonce is present in the emitted policy.
+	var nonce string
+	handler := CSPNonceMiddleware(SecurityHeadersMiddleware(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			nonce = NonceFromContext(r.Context())
+			w.WriteHeader(http.StatusOK)
+		}),
+	))
 
 	req := httptest.NewRequest(http.MethodGet, "/test", nil)
 	w := httptest.NewRecorder()
@@ -137,11 +144,45 @@ func TestSecurityHeadersMiddleware_CSP(t *testing.T) {
 	handler.ServeHTTP(w, req)
 
 	csp := w.Header().Get("Content-Security-Policy")
+	assert.NotEmpty(t, nonce, "CSPNonceMiddleware must populate a nonce")
+
+	// Current intended strict policy (post Tailwind -> Bulma/Alpine.js CSP
+	// build migration): no 'unsafe-inline', no 'unsafe-eval', script-src
+	// gated by a per-request nonce.
 	assert.Contains(t, csp, "default-src 'self'")
-	assert.Contains(t, csp, "script-src 'self' 'unsafe-inline' 'unsafe-eval'")
-	assert.Contains(t, csp, "style-src 'self' 'unsafe-inline'")
+	assert.Contains(t, csp, "script-src 'self' 'nonce-"+nonce+"'")
+	assert.Contains(t, csp, "style-src 'self'")
 	assert.Contains(t, csp, "img-src 'self' data:")
+	assert.Contains(t, csp, "font-src 'self'")
+	assert.Contains(t, csp, "connect-src 'self'")
 	assert.Contains(t, csp, "frame-ancestors 'none'")
+	assert.Contains(t, csp, "base-uri 'self'")
+	assert.Contains(t, csp, "form-action 'self'")
+	assert.Contains(t, csp, "object-src 'none'")
+
+	// Security-critical invariants: the strict CSP must never regress to
+	// permitting inline scripts/styles or eval.
+	assert.NotContains(t, csp, "'unsafe-inline'")
+	assert.NotContains(t, csp, "'unsafe-eval'")
+}
+
+func TestSecurityHeadersMiddleware_CSPNoNonceInContext(t *testing.T) {
+	// SecurityHeadersMiddleware used without CSPNonceMiddleware in front
+	// (no nonce in context) must not emit a malformed, empty 'nonce-'
+	// source. It should omit the nonce source entirely and fall back to
+	// script-src 'self', which still blocks all inline scripts.
+	handler := SecurityHeadersMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+
+	csp := w.Header().Get("Content-Security-Policy")
+	assert.Contains(t, csp, "script-src 'self';", "script-src must fall back to 'self' only")
+	assert.NotContains(t, csp, "nonce-", "no nonce source should be emitted when no nonce is in context")
 }
 
 func TestSecurityHeadersMiddleware_NoHSTS_HTTP(t *testing.T) {

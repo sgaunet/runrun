@@ -8,21 +8,21 @@ import (
 )
 
 const (
-	// DefaultCost is the default bcrypt cost factor
+	// DefaultCost is the default bcrypt cost factor.
 	DefaultCost = 10
-	// MinPasswordLength is the minimum password length
+	// MinPasswordLength is the minimum password length.
 	MinPasswordLength = 8
 )
 
-// HashPassword generates a bcrypt hash from a plain text password
+// HashPassword generates a bcrypt hash from a plain text password.
 func HashPassword(password string) (string, error) {
 	return HashPasswordWithCost(password, DefaultCost)
 }
 
-// HashPasswordWithCost generates a bcrypt hash with a custom cost factor
+// HashPasswordWithCost generates a bcrypt hash with a custom cost factor.
 func HashPasswordWithCost(password string, cost int) (string, error) {
 	if len(password) < MinPasswordLength {
-		return "", fmt.Errorf("password must be at least %d characters long", MinPasswordLength)
+		return "", fmt.Errorf("%w: must be at least %d characters long", ErrPasswordTooShort, MinPasswordLength)
 	}
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), cost)
@@ -33,7 +33,7 @@ func HashPasswordWithCost(password string, cost int) (string, error) {
 	return string(hash), nil
 }
 
-// VerifyPassword compares a bcrypt hash with a plain text password
+// VerifyPassword compares a bcrypt hash with a plain text password.
 func VerifyPassword(hash, password string) error {
 	err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
 	if err != nil {
@@ -45,10 +45,10 @@ func VerifyPassword(hash, password string) error {
 	return nil
 }
 
-// ValidatePasswordStrength checks if a password meets minimum requirements
+// ValidatePasswordStrength checks if a password meets minimum requirements.
 func ValidatePasswordStrength(password string) error {
 	if len(password) < MinPasswordLength {
-		return fmt.Errorf("password must be at least %d characters long", MinPasswordLength)
+		return fmt.Errorf("%w: must be at least %d characters long", ErrPasswordTooShort, MinPasswordLength)
 	}
 
 	// Add more strength requirements as needed

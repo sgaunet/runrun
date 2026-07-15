@@ -7,7 +7,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-// GenerateToken creates a new JWT token for a user
+// GenerateToken creates a new JWT token for a user.
 func (s *Service) GenerateToken(username string) (string, error) {
 	now := time.Now()
 	expiresAt := now.Add(s.sessionTimeout)
@@ -35,13 +35,13 @@ func (s *Service) GenerateToken(username string) (string, error) {
 	return tokenString, nil
 }
 
-// ValidateToken validates a JWT token and returns the claims
+// ValidateToken validates a JWT token and returns the claims.
 func (s *Service) ValidateToken(tokenString string) (*Claims, error) {
 	// Parse token
-	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (any, error) {
 		// Verify signing method
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+			return nil, fmt.Errorf("%w: %v", ErrUnexpectedSigningMethod, token.Header["alg"])
 		}
 		return []byte(s.jwtSecret), nil
 	})
@@ -73,7 +73,7 @@ func (s *Service) ValidateToken(tokenString string) (*Claims, error) {
 	return nil, ErrTokenInvalid
 }
 
-// RefreshToken generates a new token for an existing valid token
+// RefreshToken generates a new token for an existing valid token.
 func (s *Service) RefreshToken(oldToken string) (string, error) {
 	// Validate the old token
 	claims, err := s.ValidateToken(oldToken)

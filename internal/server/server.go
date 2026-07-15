@@ -1,6 +1,7 @@
 package server
 
 import (
+	"fmt"
 	"log"
 	"runtime/debug"
 	"time"
@@ -16,6 +17,16 @@ import (
 	"github.com/sgaunet/runrun/internal/security"
 	"github.com/sgaunet/runrun/internal/websocket"
 )
+
+// maxLoginAttempts is the number of failed login attempts allowed within
+// loginRateLimitWindow before the rate limiter blocks further attempts.
+const maxLoginAttempts = 5
+
+// loginRateLimitWindow is the sliding window over which maxLoginAttempts is enforced.
+const loginRateLimitWindow = 15 * time.Minute
+
+// sessionCleanupInterval is how often expired sessions are purged.
+const sessionCleanupInterval = 5 * time.Minute
 
 // assetVersion returns a short build identifier used to cache-bust the
 // embedded static assets in <link> and <script> URLs. It is derived from
@@ -34,7 +45,7 @@ func assetVersion() string {
 	return "dev"
 }
 
-// Server represents the HTTP server
+// Server represents the HTTP server.
 type Server struct {
 	router        *chi.Mux
 	authService   *auth.Service
@@ -50,7 +61,7 @@ type Server struct {
 	assetVersion  string
 }
 
-// New creates a new server instance
+// New creates a new server instance.
 func New(cfg *config.Config) *Server {
 	s := &Server{
 		config:       cfg,
@@ -82,8 +93,8 @@ func New(cfg *config.Config) *Server {
 	// Wire broadcaster to executor for real-time log streaming
 	s.executor.SetBroadcaster(s.wsBroadcaster)
 
-	// Initialize rate limiter (5 login attempts per 15 minutes)
-	s.rateLimiter = ratelimit.NewLimiter(5, 15*time.Minute)
+	// Initialize rate limiter
+	s.rateLimiter = ratelimit.NewLimiter(maxLoginAttempts, loginRateLimitWindow)
 
 	// Initialize CSRF protection
 	s.csrf = csrf.New()
@@ -103,7 +114,7 @@ func New(cfg *config.Config) *Server {
 	return s
 }
 
-// Shutdown gracefully shuts down the server
+// Shutdown gracefully shuts down the server.
 func (s *Server) Shutdown() error {
 	log.Println("Shutting down server...")
 
@@ -113,12 +124,27 @@ func (s *Server) Shutdown() error {
 	// Shutdown executor
 	if err := s.executor.Shutdown(); err != nil {
 		log.Printf("Executor shutdown error: %v", err)
-		return err
+		return fmt.Errorf("shutdown executor: %w", err)
 	}
 	return nil
 }
 
-// setupRouter configures the Chi router with middleware and routes
+// Router returns the configured Chi router.
+func (s *Server) Router() *chi.Mux {
+	return s.router
+}
+
+// AuthService returns the authentication service.
+func (s *Server) AuthService() *auth.Service {
+	return s.authService
+}
+
+// GetWebSocketBroadcaster returns the WebSocket broadcaster.
+func (s *Server) GetWebSocketBroadcaster() *websocket.Broadcaster {
+	return s.wsBroadcaster
+}
+
+// setupRouter configures the Chi router with middleware and routes.
 func (s *Server) setupRouter() {
 	r := chi.NewRouter()
 
@@ -136,28 +162,13 @@ func (s *Server) setupRouter() {
 	s.router = r
 }
 
-// Router returns the configured Chi router
-func (s *Server) Router() *chi.Mux {
-	return s.router
-}
-
-// AuthService returns the authentication service
-func (s *Server) AuthService() *auth.Service {
-	return s.authService
-}
-
-// sessionCleanupWorker periodically cleans up expired sessions
+// sessionCleanupWorker periodically cleans up expired sessions.
 func (s *Server) sessionCleanupWorker() {
-	ticker := time.NewTicker(5 * time.Minute)
+	ticker := time.NewTicker(sessionCleanupInterval)
 	defer ticker.Stop()
 
 	for range ticker.C {
 		s.authService.CleanupExpiredSessions()
 		log.Println("Cleaned up expired sessions")
 	}
-}
-
-// GetWebSocketBroadcaster returns the WebSocket broadcaster
-func (s *Server) GetWebSocketBroadcaster() *websocket.Broadcaster {
-	return s.wsBroadcaster
 }

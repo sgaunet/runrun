@@ -4,175 +4,37 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strconv"
 	"time"
 )
 
 const (
-	// SessionCookieName is the name of the session cookie
+	// SessionCookieName is the name of the session cookie.
 	SessionCookieName = "session"
 
-	// ContentTypeJSON is the MIME type for JSON content
+	// ContentTypeJSON is the MIME type for JSON content.
 	ContentTypeJSON = "application/json"
+
+	// tokenLogPrefixLen is how many leading characters of a session token
+	// are safe to include in diagnostic logs. The full token is a bearer
+	// credential and must never be logged.
+	tokenLogPrefixLen = 10
 )
 
-// LoginRequest represents the login request payload
+// LoginRequest represents the login request payload.
 type LoginRequest struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
 }
 
-// LoginResponse represents the login response
+// LoginResponse represents the login response.
 type LoginResponse struct {
 	Success bool   `json:"success"`
 	Message string `json:"message"`
 }
 
-// LoginHandler handles user login requests
-func (s *Service) LoginHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	// Parse request based on Content-Type
-	var req LoginRequest
-	contentType := r.Header.Get("Content-Type")
-
-	if contentType == ContentTypeJSON {
-		// Parse as JSON
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "Invalid JSON request", http.StatusBadRequest)
-			return
-		}
-	} else {
-		// Parse as form data (default for browser forms)
-		if err := r.ParseForm(); err != nil {
-			http.Error(w, "Invalid form request", http.StatusBadRequest)
-			return
-		}
-		req.Username = r.FormValue("username")
-		req.Password = r.FormValue("password")
-	}
-
-	// Validate credentials
-	token, err := s.Authenticate(req.Username, req.Password)
-	if err != nil {
-		log.Printf("Login failed for user %s: %v", req.Username, err)
-
-		// Check if this is a browser form submission or API call
-		acceptHeader := r.Header.Get("Accept")
-
-		// If JSON was sent or JSON is explicitly requested, return JSON error
-		if contentType == ContentTypeJSON || acceptHeader == ContentTypeJSON {
-			w.WriteHeader(http.StatusUnauthorized)
-			if err := json.NewEncoder(w).Encode(LoginResponse{
-				Success: false,
-				Message: "Invalid username or password",
-			}); err != nil {
-				log.Printf("Failed to encode login response: %v", err)
-			}
-			return
-		}
-
-		// Otherwise, redirect back to login page with error (browser form submission)
-		http.Redirect(w, r, "/login?error=Invalid+username+or+password", http.StatusSeeOther)
-		return
-	}
-
-	// Set session cookie
-	http.SetCookie(w, &http.Cookie{
-		Name:     SessionCookieName,
-		Value:    token,
-		Path:     "/",
-		Expires:  time.Now().Add(s.sessionTimeout),
-		HttpOnly: true,
-		Secure:   false, // Set to true in production with HTTPS
-		SameSite: http.SameSiteStrictMode,
-	})
-
-	log.Printf("User %s logged in successfully", req.Username)
-
-	// Check if this is a browser form submission or API call
-	acceptHeader := r.Header.Get("Accept")
-
-	// If JSON was sent or JSON is explicitly requested, return JSON
-	if contentType == ContentTypeJSON || acceptHeader == ContentTypeJSON {
-		w.Header().Set("Content-Type", ContentTypeJSON)
-		if err := json.NewEncoder(w).Encode(LoginResponse{
-			Success: true,
-			Message: "Login successful",
-		}); err != nil {
-			log.Printf("Failed to encode login response: %v", err)
-		}
-		return
-	}
-
-	// Otherwise, redirect to dashboard (browser form submission)
-	http.Redirect(w, r, "/", http.StatusSeeOther)
-}
-
-// LogoutHandler handles user logout requests
-func (s *Service) LogoutHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	// Get token from cookie
-	cookie, err := r.Cookie(SessionCookieName)
-	if err == nil && cookie.Value != "" {
-		// Revoke session
-		s.RevokeSession(cookie.Value)
-		log.Printf("Session revoked for token: %s", cookie.Value[:10]+"...")
-	}
-
-	// Clear cookie
-	http.SetCookie(w, &http.Cookie{
-		Name:     SessionCookieName,
-		Value:    "",
-		Path:     "/",
-		Expires:  time.Unix(0, 0),
-		MaxAge:   -1,
-		HttpOnly: true,
-		Secure:   false,
-		SameSite: http.SameSiteStrictMode,
-	})
-
-	// Check if this is a browser form submission or API call
-	acceptHeader := r.Header.Get("Accept")
-	contentType := r.Header.Get("Content-Type")
-
-	// If JSON was sent or JSON is explicitly requested, return JSON
-	if contentType == ContentTypeJSON || acceptHeader == ContentTypeJSON {
-		w.Header().Set("Content-Type", ContentTypeJSON)
-		if err := json.NewEncoder(w).Encode(LoginResponse{
-			Success: true,
-			Message: "Logout successful",
-		}); err != nil {
-			log.Printf("Failed to encode logout response: %v", err)
-		}
-		return
-	}
-
-	// Otherwise, redirect to login page (browser form submission)
-	http.Redirect(w, r, "/login", http.StatusSeeOther)
-}
-
-// LoginPageHandler serves the login page HTML
-func (s *Service) LoginPageHandler(w http.ResponseWriter, r *http.Request) {
-	// Check if already logged in
-	if cookie, err := r.Cookie(SessionCookieName); err == nil {
-		if _, err := s.ValidateSession(cookie.Value); err == nil {
-			// Already logged in, redirect to dashboard
-			http.Redirect(w, r, "/", http.StatusSeeOther)
-			return
-		}
-	}
-
-	// Serve login page (will be implemented with templ later)
-	w.Header().Set("Content-Type", "text/html")
-	//nolint:errcheck // best-effort HTML write
-	w.Write([]byte(`
+// loginPageHTML is the static fallback login page served by LoginPageHandler.
+const loginPageHTML = `
 <!DOCTYPE html>
 <html>
 <head>
@@ -225,5 +87,190 @@ func (s *Service) LoginPageHandler(w http.ResponseWriter, r *http.Request) {
     </script>
 </body>
 </html>
-	`))
+	`
+
+// LoginHandler handles user login requests.
+func (s *Service) LoginHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	req, contentType, errMsg := parseLoginRequest(r)
+	if errMsg != "" {
+		http.Error(w, errMsg, http.StatusBadRequest)
+		return
+	}
+
+	token, err := s.Authenticate(req.Username, req.Password)
+	if err != nil {
+		s.respondLoginFailure(w, r, req.Username, contentType, err)
+		return
+	}
+
+	s.respondLoginSuccess(w, r, req.Username, contentType, token)
+}
+
+// LogoutHandler handles user logout requests.
+func (s *Service) LogoutHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Get token from cookie
+	cookie, err := r.Cookie(SessionCookieName)
+	if err == nil && cookie.Value != "" {
+		// Revoke session
+		s.RevokeSession(cookie.Value)
+		prefix := tokenLogPrefix(cookie.Value)
+		log.Printf("Session revoked for token: %s", strconv.Quote(prefix))
+	}
+
+	// Clear cookie
+	//nolint:gosec // G124: Secure is computed at runtime via isSecureRequest(r); see its doc comment for rationale.
+	http.SetCookie(w, &http.Cookie{
+		Name:     SessionCookieName,
+		Value:    "",
+		Path:     "/",
+		Expires:  time.Unix(0, 0),
+		MaxAge:   -1,
+		HttpOnly: true,
+		Secure:   isSecureRequest(r),
+		SameSite: http.SameSiteStrictMode,
+	})
+
+	// Check if this is a browser form submission or API call
+	acceptHeader := r.Header.Get("Accept")
+	contentType := r.Header.Get("Content-Type")
+
+	// If JSON was sent or JSON is explicitly requested, return JSON
+	if contentType == ContentTypeJSON || acceptHeader == ContentTypeJSON {
+		w.Header().Set("Content-Type", ContentTypeJSON)
+		if err := json.NewEncoder(w).Encode(LoginResponse{
+			Success: true,
+			Message: "Logout successful",
+		}); err != nil {
+			log.Printf("Failed to encode logout response: %v", err)
+		}
+		return
+	}
+
+	// Otherwise, redirect to login page (browser form submission)
+	http.Redirect(w, r, "/login", http.StatusSeeOther)
+}
+
+// LoginPageHandler serves the login page HTML.
+func (s *Service) LoginPageHandler(w http.ResponseWriter, r *http.Request) {
+	// Check if already logged in
+	if cookie, err := r.Cookie(SessionCookieName); err == nil {
+		if _, err := s.ValidateSession(cookie.Value); err == nil {
+			// Already logged in, redirect to dashboard
+			http.Redirect(w, r, "/", http.StatusSeeOther)
+			return
+		}
+	}
+
+	// Serve login page (will be implemented with templ later)
+	w.Header().Set("Content-Type", "text/html")
+	if _, err := w.Write([]byte(loginPageHTML)); err != nil {
+		log.Printf("Failed to write login page response: %v", err)
+	}
+}
+
+// parseLoginRequest extracts login credentials from the request body,
+// decoding JSON when the client sent Content-Type: application/json and
+// falling back to an HTML form submission otherwise. errMsg is non-empty
+// (and suitable for http.Error) when the body could not be parsed.
+func parseLoginRequest(r *http.Request) (LoginRequest, string, string) {
+	var req LoginRequest
+	contentType := r.Header.Get("Content-Type")
+
+	if contentType == ContentTypeJSON {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			return req, contentType, "Invalid JSON request"
+		}
+		return req, contentType, ""
+	}
+
+	if err := r.ParseForm(); err != nil {
+		return req, contentType, "Invalid form request"
+	}
+	req.Username = r.FormValue("username")
+	req.Password = r.FormValue("password")
+	return req, contentType, ""
+}
+
+// respondLoginFailure logs a failed login attempt and writes the
+// appropriate JSON or redirect response depending on how the client asked
+// to be answered.
+func (s *Service) respondLoginFailure(w http.ResponseWriter, r *http.Request, username, contentType string, authErr error) {
+	log.Printf("Login failed for user %s: %v", strconv.Quote(username), authErr)
+
+	// Check if this is a browser form submission or API call
+	acceptHeader := r.Header.Get("Accept")
+
+	// If JSON was sent or JSON is explicitly requested, return JSON error
+	if contentType == ContentTypeJSON || acceptHeader == ContentTypeJSON {
+		w.WriteHeader(http.StatusUnauthorized)
+		if err := json.NewEncoder(w).Encode(LoginResponse{
+			Success: false,
+			Message: "Invalid username or password",
+		}); err != nil {
+			log.Printf("Failed to encode login response: %v", err)
+		}
+		return
+	}
+
+	// Otherwise, redirect back to login page with error (browser form submission)
+	http.Redirect(w, r, "/login?error=Invalid+username+or+password", http.StatusSeeOther)
+}
+
+// respondLoginSuccess sets the session cookie, logs the successful login,
+// and writes the appropriate JSON or redirect response depending on how
+// the client asked to be answered.
+func (s *Service) respondLoginSuccess(w http.ResponseWriter, r *http.Request, username, contentType, token string) {
+	// Set session cookie
+	//nolint:gosec // G124: Secure is computed at runtime via isSecureRequest(r); see its doc comment for rationale.
+	http.SetCookie(w, &http.Cookie{
+		Name:     SessionCookieName,
+		Value:    token,
+		Path:     "/",
+		Expires:  time.Now().Add(s.sessionTimeout),
+		HttpOnly: true,
+		Secure:   isSecureRequest(r),
+		SameSite: http.SameSiteStrictMode,
+	})
+
+	log.Printf("User %s logged in successfully", strconv.Quote(username))
+
+	// Check if this is a browser form submission or API call
+	acceptHeader := r.Header.Get("Accept")
+
+	// If JSON was sent or JSON is explicitly requested, return JSON
+	if contentType == ContentTypeJSON || acceptHeader == ContentTypeJSON {
+		w.Header().Set("Content-Type", ContentTypeJSON)
+		if err := json.NewEncoder(w).Encode(LoginResponse{
+			Success: true,
+			Message: "Login successful",
+		}); err != nil {
+			log.Printf("Failed to encode login response: %v", err)
+		}
+		return
+	}
+
+	// Otherwise, redirect to dashboard (browser form submission)
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+// tokenLogPrefix returns a short, bounded prefix of a session token for
+// diagnostic logging. The full token is a bearer credential and must never
+// be logged. Session tokens are attacker-influenced input (an arbitrary
+// cookie value), so this also guards against slicing past the end of a
+// short string.
+func tokenLogPrefix(token string) string {
+	if len(token) <= tokenLogPrefixLen {
+		return token + "..."
+	}
+	return token[:tokenLogPrefixLen] + "..."
 }

@@ -10,14 +10,23 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// clientIDCounter is used to generate unique client IDs
+// clientIDCounter is used to generate unique client IDs.
 var clientIDCounter atomic.Uint64
+
+const (
+	// defaultBroadcastChannelSize is the buffer size of the hub's Broadcast channel.
+	defaultBroadcastChannelSize = 256
+
+	// idleCheckDivisor controls how often the hub checks for idle clients,
+	// relative to the configured idle timeout: every IdleTimeout/idleCheckDivisor.
+	idleCheckDivisor = 2
+)
 
 func generateClientID() string {
 	return fmt.Sprintf("client-%d", clientIDCounter.Add(1))
 }
 
-// NewHub creates a new WebSocket hub
+// NewHub creates a new WebSocket hub.
 func NewHub(config *Config) *Hub {
 	if config == nil {
 		config = DefaultConfig()
@@ -27,18 +36,18 @@ func NewHub(config *Config) *Hub {
 		Subscriptions:       make(map[string]map[*Client]bool),
 		Register:            make(chan *Client),
 		Unregister:          make(chan *Client),
-		Broadcast:           make(chan *BroadcastMessage, 256),
+		Broadcast:           make(chan *BroadcastMessage, defaultBroadcastChannelSize),
 		stop:                make(chan struct{}),
 		config:              config,
 		executionConnCounts: make(map[string]int),
 	}
 }
 
-// Run starts the hub's main event loop
+// Run starts the hub's main event loop.
 func (h *Hub) Run() {
 	var idleTicker *time.Ticker
 	if h.config.IdleTimeout > 0 {
-		idleTicker = time.NewTicker(h.config.IdleTimeout / 2)
+		idleTicker = time.NewTicker(h.config.IdleTimeout / idleCheckDivisor)
 		defer idleTicker.Stop()
 	} else {
 		// Create a stopped ticker so select doesn't panic
@@ -66,7 +75,7 @@ func (h *Hub) Run() {
 	}
 }
 
-// registerClient registers a new client
+// registerClient registers a new client.
 func (h *Hub) registerClient(client *Client) {
 	h.ClientsMu.Lock()
 	h.Clients[client] = true
@@ -75,7 +84,7 @@ func (h *Hub) registerClient(client *Client) {
 	log.Printf("WebSocket client registered: %s", client.ID)
 }
 
-// unregisterClient unregisters a client and cleans up resources
+// unregisterClient unregisters a client and cleans up resources.
 func (h *Hub) unregisterClient(client *Client) {
 	h.ClientsMu.Lock()
 	if _, ok := h.Clients[client]; ok {
@@ -108,7 +117,7 @@ func (h *Hub) unregisterClient(client *Client) {
 	log.Printf("WebSocket client unregistered: %s", client.ID)
 }
 
-// broadcastMessage sends a message to all clients subscribed to an execution
+// broadcastMessage sends a message to all clients subscribed to an execution.
 func (h *Hub) broadcastMessage(message *BroadcastMessage) {
 	// Snapshot the subscriber set under the read lock. Iterating the map
 	// directly while Subscribe/Unsubscribe may mutate it from other goroutines
@@ -198,19 +207,19 @@ func (h *Hub) evictIdleClients() {
 	}
 }
 
-// RegisterClient creates a new client for the given connection and registers it with the Hub
+// RegisterClient creates a new client for the given connection and registers it with the Hub.
 func (h *Hub) RegisterClient(conn *websocket.Conn) *Client {
 	client := NewClient(h, conn, generateClientID(), h.config)
 	h.Register <- client
 	return client
 }
 
-// UnregisterClient unregisters a client from the Hub
+// UnregisterClient unregisters a client from the Hub.
 func (h *Hub) UnregisterClient(client *Client) {
 	h.Unregister <- client
 }
 
-// Subscribe adds a client to an execution's subscription list
+// Subscribe adds a client to an execution's subscription list.
 func (h *Hub) Subscribe(client *Client, executionID string) {
 	// Add to client's subscription list
 	client.SubscribeMu.Lock()
@@ -230,10 +239,10 @@ func (h *Hub) Subscribe(client *Client, executionID string) {
 	h.executionConnCounts[executionID]++
 	h.connCountsMu.Unlock()
 
-	log.Printf("Client %s subscribed to execution %s", client.ID, executionID)
+	log.Printf("Client %s subscribed to execution %s", sanitizeLogValue(client.ID), sanitizeLogValue(executionID))
 }
 
-// Unsubscribe removes a client from an execution's subscription list
+// Unsubscribe removes a client from an execution's subscription list.
 func (h *Hub) Unsubscribe(client *Client, executionID string) {
 	// Remove from client's subscription list
 	client.SubscribeMu.Lock()
@@ -260,10 +269,10 @@ func (h *Hub) Unsubscribe(client *Client, executionID string) {
 	}
 	h.connCountsMu.Unlock()
 
-	log.Printf("Client %s unsubscribed from execution %s", client.ID, executionID)
+	log.Printf("Client %s unsubscribed from execution %s", sanitizeLogValue(client.ID), sanitizeLogValue(executionID))
 }
 
-// GetSubscriberCount returns the number of clients subscribed to an execution
+// GetSubscriberCount returns the number of clients subscribed to an execution.
 func (h *Hub) GetSubscriberCount(executionID string) int {
 	h.SubscriptionsMu.RLock()
 	defer h.SubscriptionsMu.RUnlock()
@@ -274,7 +283,7 @@ func (h *Hub) GetSubscriberCount(executionID string) int {
 	return 0
 }
 
-// ConnectionLimitReached returns true if the execution has reached its max connections
+// ConnectionLimitReached returns true if the execution has reached its max connections.
 func (h *Hub) ConnectionLimitReached(executionID string) bool {
 	if h.config.MaxConnectionsPerExecution <= 0 {
 		return false
@@ -284,14 +293,14 @@ func (h *Hub) ConnectionLimitReached(executionID string) bool {
 	return h.executionConnCounts[executionID] >= h.config.MaxConnectionsPerExecution
 }
 
-// GetConnectionCount returns the current connection count for an execution
+// GetConnectionCount returns the current connection count for an execution.
 func (h *Hub) GetConnectionCount(executionID string) int {
 	h.connCountsMu.RLock()
 	defer h.connCountsMu.RUnlock()
 	return h.executionConnCounts[executionID]
 }
 
-// GetConfig returns the hub's configuration
+// GetConfig returns the hub's configuration.
 func (h *Hub) GetConfig() *Config {
 	return h.config
 }
@@ -325,7 +334,7 @@ func (h *Hub) Shutdown() {
 	}
 }
 
-// Stop signals the hub's Run loop to exit
+// Stop signals the hub's Run loop to exit.
 func (h *Hub) Stop() {
 	close(h.stop)
 }

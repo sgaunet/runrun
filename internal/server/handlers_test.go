@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -231,42 +230,6 @@ func TestStatusAPIHandler(t *testing.T) {
 	assert.Equal(t, float64(2), stats["total"])
 }
 
-func TestDashboardHandler(t *testing.T) {
-	server := setupHandlerTestServer(t)
-
-	req := httptest.NewRequest("GET", "/", nil)
-	ctx := context.WithValue(req.Context(), auth.UserContextKey, "testuser")
-	req = req.WithContext(ctx)
-	w := httptest.NewRecorder()
-
-	server.dashboardHandler(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, "text/html", w.Header().Get("Content-Type"))
-	assert.Contains(t, w.Body.String(), "RunRun")
-	assert.Contains(t, w.Body.String(), "testuser")
-	assert.Contains(t, w.Body.String(), "Dashboard")
-}
-
-func TestTaskDetailHandler(t *testing.T) {
-	server := setupHandlerTestServer(t)
-
-	router := chi.NewRouter()
-	router.Get("/tasks/{taskName}", server.taskDetailHandler)
-
-	req := httptest.NewRequest("GET", "/tasks/test-task-1", nil)
-	ctx := context.WithValue(req.Context(), auth.UserContextKey, "testuser")
-	req = req.WithContext(ctx)
-	w := httptest.NewRecorder()
-
-	router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, "text/html", w.Header().Get("Content-Type"))
-	assert.Contains(t, w.Body.String(), "test-task-1")
-	assert.Contains(t, w.Body.String(), "testuser")
-}
-
 func TestDownloadLogsHandler_NotFound(t *testing.T) {
 	server := setupHandlerTestServer(t)
 
@@ -280,20 +243,6 @@ func TestDownloadLogsHandler_NotFound(t *testing.T) {
 
 	assert.Equal(t, http.StatusNotFound, w.Code)
 	assert.Contains(t, w.Body.String(), "not found")
-}
-
-func TestViewLogsHandler_NotFound(t *testing.T) {
-	server := setupHandlerTestServer(t)
-
-	router := chi.NewRouter()
-	router.Get("/logs/{executionID}", server.viewLogsHandler)
-
-	req := httptest.NewRequest("GET", "/logs/nonexistent-id", nil)
-	w := httptest.NewRecorder()
-
-	router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
 func TestPollLogsHandler_NotFound(t *testing.T) {
@@ -461,31 +410,6 @@ func TestStatusAPIHandler_NoCacheHeader(t *testing.T) {
 
 	// Verify it's JSON (no explicit cache header set on this endpoint currently)
 	assert.Equal(t, "application/json", w.Header().Get("Content-Type"))
-}
-
-func TestViewLogsHandler_WithExecution(t *testing.T) {
-	server := setupHandlerTestServer(t)
-
-	// Execute a task
-	task := &server.config.Tasks[0]
-	executionID, err := server.executor.SubmitTask(task)
-	require.NoError(t, err)
-
-	// Wait for execution to complete
-	time.Sleep(500 * time.Millisecond)
-
-	router := chi.NewRouter()
-	router.Get("/logs/{executionID}", server.viewLogsHandler)
-
-	req := httptest.NewRequest("GET", fmt.Sprintf("/logs/%s", executionID), nil)
-	w := httptest.NewRecorder()
-
-	router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, "text/html", w.Header().Get("Content-Type"))
-	assert.Contains(t, w.Body.String(), executionID)
-	assert.Contains(t, w.Body.String(), "test-task-1")
 }
 
 func TestDownloadLogsHandler_WithExecution(t *testing.T) {

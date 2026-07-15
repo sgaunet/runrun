@@ -32,15 +32,15 @@ type StreamBuffer struct {
 func NewStreamBuffer(config *Config, executionID string, flushFn func(string, []LogData)) *StreamBuffer {
 	maxLines := config.StreamBufferMaxLines
 	if maxLines <= 0 {
-		maxLines = 50
+		maxLines = defaultStreamBufferMaxLines
 	}
 	maxBytes := config.StreamBufferMaxBytes
 	if maxBytes <= 0 {
-		maxBytes = 1024 * 1024
+		maxBytes = defaultStreamBufferMaxBytes
 	}
 	flushInterval := config.StreamBufferFlushInterval
 	if flushInterval <= 0 {
-		flushInterval = 100 * time.Millisecond
+		flushInterval = defaultStreamBufferFlushInterval
 	}
 
 	sb := &StreamBuffer{
@@ -202,7 +202,7 @@ func BroadcastBatch(hub *Hub, executionID string, batch []LogData) {
 		}
 		level := batch[0].Level
 		if level == "" {
-			level = "info"
+			level = string(LogLevelInfo)
 		}
 		hub.Broadcast <- &BroadcastMessage{
 			ExecutionID: executionID,

@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// Service handles authentication operations
+// Service handles authentication operations.
 type Service struct {
 	users          map[string]*User    // username -> User
 	sessions       map[string]*Session // token -> Session
@@ -14,7 +14,7 @@ type Service struct {
 	sessionTimeout time.Duration
 }
 
-// NewService creates a new authentication service
+// NewService creates a new authentication service.
 func NewService(jwtSecret string, sessionTimeout time.Duration) *Service {
 	return &Service{
 		users:          make(map[string]*User),
@@ -24,7 +24,7 @@ func NewService(jwtSecret string, sessionTimeout time.Duration) *Service {
 	}
 }
 
-// AddUser adds a user to the service (from configuration)
+// AddUser adds a user to the service (from configuration).
 func (s *Service) AddUser(username, passwordHash string) {
 	s.users[username] = &User{
 		Username:     username,
@@ -32,7 +32,7 @@ func (s *Service) AddUser(username, passwordHash string) {
 	}
 }
 
-// GetUser retrieves a user by username
+// GetUser retrieves a user by username.
 func (s *Service) GetUser(username string) (*User, error) {
 	user, exists := s.users[username]
 	if !exists {
@@ -41,7 +41,7 @@ func (s *Service) GetUser(username string) (*User, error) {
 	return user, nil
 }
 
-// Authenticate validates credentials and creates a session
+// Authenticate validates credentials and creates a session.
 func (s *Service) Authenticate(username, password string) (string, error) {
 	// Get user
 	user, err := s.GetUser(username)
@@ -73,7 +73,7 @@ func (s *Service) Authenticate(username, password string) (string, error) {
 	return token, nil
 }
 
-// ValidateSession validates a token and returns the username
+// ValidateSession validates a token and returns the username.
 func (s *Service) ValidateSession(token string) (string, error) {
 	// Validate JWT token
 	claims, err := s.ValidateToken(token)
@@ -98,14 +98,14 @@ func (s *Service) ValidateSession(token string) (string, error) {
 	return claims.Username, nil
 }
 
-// RevokeSession removes a session
+// RevokeSession removes a session.
 func (s *Service) RevokeSession(token string) {
 	s.sessionsMutex.Lock()
 	delete(s.sessions, token)
 	s.sessionsMutex.Unlock()
 }
 
-// CleanupExpiredSessions removes expired sessions (should be called periodically)
+// CleanupExpiredSessions removes expired sessions (should be called periodically).
 func (s *Service) CleanupExpiredSessions() {
 	s.sessionsMutex.Lock()
 	defer s.sessionsMutex.Unlock()
@@ -118,7 +118,7 @@ func (s *Service) CleanupExpiredSessions() {
 }
 
 // CreateSessionForTesting creates a session for testing purposes
-// This should only be used in tests
+// This should only be used in tests.
 func (s *Service) CreateSessionForTesting(token, username string) {
 	s.sessionsMutex.Lock()
 	defer s.sessionsMutex.Unlock()

@@ -1,3 +1,6 @@
+// Package middleware provides the shared HTTP middleware chain (CSP nonce
+// generation, request IDs, panic recovery, security headers, request
+// logging, and request timeouts) used by RunRun's HTTP server.
 package middleware
 
 import (
@@ -5,10 +8,12 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
 	"runtime/debug"
+	"strconv"
 	"sync"
 	"time"
 
@@ -58,7 +63,7 @@ func NonceFromContext(ctx context.Context) string {
 	return ""
 }
 
-// RequestIDMiddleware adds a unique request ID to each request context
+// RequestIDMiddleware adds a unique request ID to each request context.
 func RequestIDMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestID := uuid.New().String()
@@ -68,7 +73,7 @@ func RequestIDMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// RecoveryMiddleware recovers from panics and returns a 500 error
+// RecoveryMiddleware recovers from panics and returns a 500 error.
 func RecoveryMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
@@ -84,7 +89,7 @@ func RecoveryMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// SecurityHeadersMiddleware adds security-related HTTP headers
+// SecurityHeadersMiddleware adds security-related HTTP headers.
 func SecurityHeadersMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Prevent clickjacking
@@ -138,7 +143,7 @@ func SecurityHeadersMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// LoggingMiddleware logs HTTP requests with duration and status
+// LoggingMiddleware logs HTTP requests with duration and status.
 func LoggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
@@ -161,14 +166,19 @@ func LoggingMiddleware(next http.Handler) http.Handler {
 			}
 		}
 
+		// r.Method, r.URL.Path, r.RemoteAddr, and requestID are all derived
+		// from the incoming request; quote them so a crafted value cannot
+		// forge additional log lines.
 		log.Printf("[%s] %s %s - Status: %d, Duration: %v, RequestID: %s",
-			r.Method, r.URL.Path, r.RemoteAddr, wrapped.statusCode, duration, requestID)
+			strconv.Quote(r.Method), strconv.Quote(r.URL.Path), strconv.Quote(r.RemoteAddr),
+			wrapped.statusCode, duration, strconv.Quote(requestID))
 	})
 }
 
-// responseWriter wraps http.ResponseWriter to capture status code
+// responseWriter wraps http.ResponseWriter to capture status code.
 type responseWriter struct {
 	http.ResponseWriter
+
 	statusCode int
 }
 
@@ -177,23 +187,27 @@ func (rw *responseWriter) WriteHeader(code int) {
 	rw.ResponseWriter.WriteHeader(code)
 }
 
-// Hijack implements http.Hijacker interface for WebSocket support
+// Hijack implements http.Hijacker interface for WebSocket support.
 func (rw *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	hijacker, ok := rw.ResponseWriter.(http.Hijacker)
 	if !ok {
 		return nil, nil, http.ErrNotSupported
 	}
-	return hijacker.Hijack()
+	conn, buf, err := hijacker.Hijack()
+	if err != nil {
+		return nil, nil, fmt.Errorf("hijack connection: %w", err)
+	}
+	return conn, buf, nil
 }
 
-// Flush implements http.Flusher interface for streaming responses
+// Flush implements http.Flusher interface for streaming responses.
 func (rw *responseWriter) Flush() {
 	if flusher, ok := rw.ResponseWriter.(http.Flusher); ok {
 		flusher.Flush()
 	}
 }
 
-// timeoutWriter wraps http.ResponseWriter to prevent concurrent writes
+// timeoutWriter wraps http.ResponseWriter to prevent concurrent writes.
 type timeoutWriter struct {
 	w        http.ResponseWriter
 	mu       sync.Mutex
@@ -214,7 +228,11 @@ func (tw *timeoutWriter) Write(b []byte) (int, error) {
 	if !tw.written {
 		tw.written = true
 	}
-	return tw.w.Write(b)
+	n, err := tw.w.Write(b)
+	if err != nil {
+		return n, fmt.Errorf("write response: %w", err)
+	}
+	return n, nil
 }
 
 func (tw *timeoutWriter) WriteHeader(code int) {
@@ -239,7 +257,7 @@ func (tw *timeoutWriter) timeout() bool {
 	return true
 }
 
-// TimeoutMiddleware adds a timeout to requests
+// TimeoutMiddleware adds a timeout to requests.
 func TimeoutMiddleware(timeout time.Duration) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -10,7 +10,15 @@ import (
 	customMiddleware "github.com/sgaunet/runrun/internal/middleware"
 )
 
-// SetupRoutes configures all application routes
+// compressionLevel is the gzip compression level applied to non-WebSocket
+// responses (see middleware.Compress).
+const compressionLevel = 5
+
+// requestTimeout bounds how long a non-WebSocket request may run before
+// the server aborts it.
+const requestTimeout = 60 * time.Second
+
+// SetupRoutes configures all application routes.
 func (s *Server) SetupRoutes() {
 	r := s.router
 
@@ -19,8 +27,8 @@ func (s *Server) SetupRoutes() {
 
 	// Apply compression and timeout middleware to all non-WebSocket routes
 	r.Group(func(r chi.Router) {
-		r.Use(middleware.Compress(5))
-		r.Use(customMiddleware.TimeoutMiddleware(60 * time.Second))
+		r.Use(middleware.Compress(compressionLevel))
+		r.Use(customMiddleware.TimeoutMiddleware(requestTimeout))
 
 		// Public routes (no authentication required)
 		r.Group(func(r chi.Router) {

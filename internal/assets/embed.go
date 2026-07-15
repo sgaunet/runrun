@@ -1,11 +1,26 @@
+// Package assets embeds and serves RunRun's static web assets (CSS, JS,
+// icons) directly from the compiled binary, with no external files or
+// Node toolchain required at runtime.
 package assets
 
 import (
 	"embed"
+	"fmt"
 	"io/fs"
 	"net/http"
 	"strings"
 	"time"
+)
+
+// Cache lifetimes applied to embedded static assets, in seconds.
+const (
+	// cacheMaxAgeAssets is applied to CSS/JS, which may change frequently
+	// during development. In production, longer cache times with
+	// versioned filenames would be preferable.
+	cacheMaxAgeAssets = 3600 // 1 hour
+
+	// cacheMaxAgeMedia is applied to images and fonts, which change rarely.
+	cacheMaxAgeMedia = 604800 // 1 week
 )
 
 // Static assets embedded into the binary
@@ -13,14 +28,18 @@ import (
 //go:embed all:static
 var staticFS embed.FS
 
-// GetStaticFS returns the embedded filesystem for static assets
+// GetStaticFS returns the embedded filesystem for static assets.
 func GetStaticFS() (fs.FS, error) {
 	// Return a sub-filesystem starting at "static" directory
-	return fs.Sub(staticFS, "static")
+	sub, err := fs.Sub(staticFS, "static")
+	if err != nil {
+		return nil, fmt.Errorf("get static sub-filesystem: %w", err)
+	}
+	return sub, nil
 }
 
 // NewStaticFileServer creates an HTTP handler that serves static files
-// from the embedded filesystem with proper cache headers
+// from the embedded filesystem with proper cache headers.
 func NewStaticFileServer() http.Handler {
 	staticFiles, err := GetStaticFS()
 	if err != nil {
@@ -30,37 +49,52 @@ func NewStaticFileServer() http.Handler {
 	fileServer := http.FileServer(http.FS(staticFiles))
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Set cache headers for static assets
 		path := r.URL.Path
-
-		// Cache CSS and JS for 1 hour (since we might update them frequently during development)
-		// In production, you might want longer cache times with versioned filenames
-		if strings.HasSuffix(path, ".css") || strings.HasSuffix(path, ".js") {
-			w.Header().Set("Cache-Control", "public, max-age=3600")
-		}
-
-		// Cache images and fonts for 1 week
-		if strings.HasSuffix(path, ".png") || strings.HasSuffix(path, ".jpg") ||
-			strings.HasSuffix(path, ".jpeg") || strings.HasSuffix(path, ".gif") ||
-			strings.HasSuffix(path, ".svg") || strings.HasSuffix(path, ".ico") ||
-			strings.HasSuffix(path, ".woff") || strings.HasSuffix(path, ".woff2") ||
-			strings.HasSuffix(path, ".ttf") || strings.HasSuffix(path, ".eot") {
-			w.Header().Set("Cache-Control", "public, max-age=604800")
-		}
-
-		// Set content type headers
-		if strings.HasSuffix(path, ".css") {
-			w.Header().Set("Content-Type", "text/css; charset=utf-8")
-		} else if strings.HasSuffix(path, ".js") {
-			w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
-		}
+		setCacheHeaders(w, path)
+		setContentTypeHeaders(w, path)
 
 		// Serve the file
 		fileServer.ServeHTTP(w, r)
 	})
 }
 
-// Asset represents metadata about an embedded asset
+// setCacheHeaders sets a Cache-Control header appropriate to the asset
+// type identified by path's extension.
+func setCacheHeaders(w http.ResponseWriter, path string) {
+	switch {
+	case strings.HasSuffix(path, ".css"), strings.HasSuffix(path, ".js"):
+		w.Header().Set("Cache-Control", fmt.Sprintf("public, max-age=%d", cacheMaxAgeAssets))
+	case isMediaAsset(path):
+		w.Header().Set("Cache-Control", fmt.Sprintf("public, max-age=%d", cacheMaxAgeMedia))
+	}
+}
+
+// isMediaAsset reports whether path names an image or font asset.
+func isMediaAsset(path string) bool {
+	mediaSuffixes := []string{
+		".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico",
+		".woff", ".woff2", ".ttf", ".eot",
+	}
+	for _, suffix := range mediaSuffixes {
+		if strings.HasSuffix(path, suffix) {
+			return true
+		}
+	}
+	return false
+}
+
+// setContentTypeHeaders sets an explicit Content-Type header for asset
+// types where http.FileServer's built-in sniffing is not desired.
+func setContentTypeHeaders(w http.ResponseWriter, path string) {
+	switch {
+	case strings.HasSuffix(path, ".css"):
+		w.Header().Set("Content-Type", "text/css; charset=utf-8")
+	case strings.HasSuffix(path, ".js"):
+		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+	}
+}
+
+// Asset represents metadata about an embedded asset.
 type Asset struct {
 	Path         string
 	Size         int64
@@ -68,7 +102,7 @@ type Asset struct {
 	IsCompressed bool
 }
 
-// ListAssets returns a list of all embedded static assets
+// ListAssets returns a list of all embedded static assets.
 func ListAssets() ([]Asset, error) {
 	var assets []Asset
 
@@ -85,7 +119,7 @@ func ListAssets() ([]Asset, error) {
 		if !d.IsDir() {
 			info, err := d.Info()
 			if err != nil {
-				return err
+				return fmt.Errorf("get file info for %s: %w", path, err)
 			}
 
 			assets = append(assets, Asset{
@@ -97,6 +131,9 @@ func ListAssets() ([]Asset, error) {
 
 		return nil
 	})
+	if err != nil {
+		return nil, fmt.Errorf("walk static assets: %w", err)
+	}
 
-	return assets, err
+	return assets, nil
 }

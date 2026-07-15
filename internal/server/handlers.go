@@ -1,21 +1,27 @@
+// Package server implements RunRun's HTTP server: request routing, page
+// and API handlers, and the WebSocket-based real-time log streaming used
+// to monitor task executions.
 package server
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"html"
 	"log"
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
+	"github.com/a-h/templ"
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
-	"github.com/a-h/templ"
 	"github.com/sgaunet/runrun/internal/auth"
 	"github.com/sgaunet/runrun/internal/config"
 	"github.com/sgaunet/runrun/internal/executor"
@@ -25,6 +31,67 @@ import (
 	"github.com/sgaunet/runrun/internal/templates/pages"
 	ws "github.com/sgaunet/runrun/internal/websocket"
 )
+
+// JSON field names shared across the JSON and WebSocket message payloads
+// built in this file. Centralized as constants to avoid repeating the same
+// string literals throughout the handlers below.
+const (
+	fieldType        = "type"
+	fieldData        = "data"
+	fieldExecutionID = "execution_id"
+	fieldTimestamp   = "timestamp"
+	fieldStatus      = "status"
+	fieldSuccess     = "success"
+	fieldMessage     = "message"
+)
+
+// WebSocket message "type" field values.
+const (
+	wsMsgTypeLog      = "log"
+	wsMsgTypeLogBatch = "log_batch"
+	wsMsgTypeError    = "error"
+	wsMsgTypeMetadata = "metadata"
+	wsMsgTypeComplete = "complete"
+)
+
+// appVersion is the version reported by the health-check endpoints.
+const appVersion = "1.0.0"
+
+// statusIdle marks a task that has never been executed.
+const statusIdle = "idle"
+
+// Tuning and size constants used by the handlers below.
+const (
+	// shortExecutionIDLen is the number of leading characters of an
+	// execution ID used to keep downloaded log filenames short.
+	shortExecutionIDLen = 8
+	// defaultSegmentCount is the number of log lines returned by the
+	// segment endpoint when the caller does not specify a count.
+	defaultSegmentCount = 500
+	// maxSegmentCount is the largest number of log lines the segment
+	// endpoint will return in a single request.
+	maxSegmentCount = 5000
+	// wsBufferSize is the read/write buffer size (in bytes) used for
+	// WebSocket connections.
+	wsBufferSize = 1024
+	// wsReadLimitBytes caps the size of messages accepted from the client
+	// on a real-time log-streaming WebSocket connection.
+	wsReadLimitBytes = 512
+	// defaultStreamBatchSize is the fallback number of log lines batched
+	// into a single WebSocket message when the hub configuration does not
+	// specify one.
+	defaultStreamBatchSize = 100
+	// completeMessageWait is how long wsLogsFromFile waits for the client
+	// to acknowledge (or disconnect after) the final "complete" message
+	// before the handler returns and the connection is closed.
+	completeMessageWait = 5 * time.Second
+)
+
+// ErrLogPathOutsideLogDir indicates that an execution's log file path does
+// not resolve to a location inside the server's configured log directory.
+// Execution log paths are always generated internally by the executor, but
+// this is checked defensively before opening the file.
+var ErrLogPathOutsideLogDir = errors.New("log file path is outside the configured log directory")
 
 // withRenderNonce returns ctx with the per-request CSP nonce attached
 // via templ.WithNonce, so every <script> tag emitted by templ (including
@@ -60,32 +127,37 @@ func writeWSJSON(conn *websocket.Conn, v any) {
 	}
 }
 
-
 // sendLogBatch sends a batch of log lines as a single WebSocket message.
 // For single-line batches, sends as a regular "log" message for backward compatibility.
-func sendLogBatch(conn *websocket.Conn, executionID string, batch []map[string]interface{}) error {
+func sendLogBatch(conn *websocket.Conn, executionID string, batch []map[string]any) error {
 	if len(batch) == 0 {
 		return nil
 	}
 
 	if len(batch) == 1 {
-		msg := map[string]interface{}{
-			"type": "log",
-			"data": batch[0],
+		msg := map[string]any{
+			fieldType: wsMsgTypeLog,
+			fieldData: batch[0],
 		}
-		return conn.WriteJSON(msg)
+		if err := conn.WriteJSON(msg); err != nil {
+			return fmt.Errorf("write websocket log message: %w", err)
+		}
+		return nil
 	}
 
-	msg := map[string]interface{}{
-		"type":         "log_batch",
-		"execution_id": executionID,
-		"data":         batch,
-		"timestamp":    time.Now().Format(time.RFC3339),
+	msg := map[string]any{
+		fieldType:        wsMsgTypeLogBatch,
+		fieldExecutionID: executionID,
+		fieldData:        batch,
+		fieldTimestamp:   time.Now().Format(time.RFC3339),
 	}
-	return conn.WriteJSON(msg)
+	if err := conn.WriteJSON(msg); err != nil {
+		return fmt.Errorf("write websocket log batch: %w", err)
+	}
+	return nil
 }
 
-// HealthResponse represents the health check response
+// HealthResponse represents the health check response.
 type HealthResponse struct {
 	Status    string            `json:"status"`
 	Version   string            `json:"version"`
@@ -94,13 +166,13 @@ type HealthResponse struct {
 	Checks    map[string]string `json:"checks,omitempty"`
 }
 
-// healthCheckHandler handles basic health check requests
-func (s *Server) healthCheckHandler(w http.ResponseWriter, r *http.Request) {
+// healthCheckHandler handles basic health check requests.
+func (s *Server) healthCheckHandler(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
 	response := HealthResponse{
 		Status:    "healthy",
-		Version:   "1.0.0",
+		Version:   appVersion,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 		Uptime:    time.Since(s.startTime).String(),
 	}
@@ -110,8 +182,8 @@ func (s *Server) healthCheckHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // readinessHandler handles readiness probe requests
-// Returns 200 if the server is ready to accept traffic, 503 otherwise
-func (s *Server) readinessHandler(w http.ResponseWriter, r *http.Request) {
+// Returns 200 if the server is ready to accept traffic, 503 otherwise.
+func (s *Server) readinessHandler(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
 	checks := make(map[string]string)
@@ -143,7 +215,7 @@ func (s *Server) readinessHandler(w http.ResponseWriter, r *http.Request) {
 
 	response := HealthResponse{
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
-		Version:   "1.0.0",
+		Version:   appVersion,
 		Checks:    checks,
 	}
 
@@ -159,13 +231,13 @@ func (s *Server) readinessHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // livenessHandler handles liveness probe requests
-// Returns 200 if the server is alive and functioning
-func (s *Server) livenessHandler(w http.ResponseWriter, r *http.Request) {
+// Returns 200 if the server is alive and functioning.
+func (s *Server) livenessHandler(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
 	response := HealthResponse{
 		Status:    "alive",
-		Version:   "1.0.0",
+		Version:   appVersion,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 		Uptime:    time.Since(s.startTime).String(),
 	}
@@ -174,141 +246,7 @@ func (s *Server) livenessHandler(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, response)
 }
 
-// dashboardHandler serves the main dashboard page
-func (s *Server) dashboardHandler(w http.ResponseWriter, r *http.Request) {
-	username := auth.GetUsernameFromContext(r)
-
-	w.Header().Set("Content-Type", "text/html")
-	fmt.Fprintf(w, `
-<!DOCTYPE html>
-<html>
-<head>
-    <title>RunRun - Dashboard</title>
-    <link rel="stylesheet" href="/static/css/bulma.min.css">
-    <link rel="stylesheet" href="/static/css/app.css">
-</head>
-<body>
-    <nav>
-        <h1>RunRun</h1>
-        <div class="user-info">
-            <span>Logged in as %s</span>
-            <form action="/logout" method="POST" style="display: inline;">
-                <button type="submit" class="btn btn-secondary">Logout</button>
-            </form>
-        </div>
-    </nav>
-    <div class="container">
-        <h2>Tasks</h2>
-        <div class="task-grid" id="taskGrid">
-            <!-- Tasks will be loaded here -->
-        </div>
-    </div>
-    <script>
-        // Load tasks via API
-        fetch('/api/status')
-            .then(res => res.json())
-            .then(data => {
-                const grid = document.getElementById('taskGrid');
-                if (data.tasks && data.tasks.length > 0) {
-                    grid.innerHTML = data.tasks.map(task => generateTaskCard(task)).join('');
-                } else {
-                    grid.innerHTML = '<p>No tasks configured</p>';
-                }
-            })
-            .catch(err => console.error('Failed to load tasks:', err));
-
-        function generateTaskCard(task) {
-            return '<div class="task-card">' +
-                '<div class="task-header">' +
-                '<h3 class="task-title">' + task.name + '</h3>' +
-                '<span class="status-badge status-' + (task.status || 'idle') + '">' + (task.status || 'idle') + '</span>' +
-                '</div>' +
-                '<p class="task-description">' + task.description + '</p>' +
-                '<div class="task-tags">' +
-                (task.tags || []).map(tag => '<span class="tag">' + tag + '</span>').join('') +
-                '</div>' +
-                '<div class="task-actions">' +
-                '<a href="/tasks/' + task.name + '" class="btn btn-secondary">View Details</a>' +
-                '<button onclick="runTask(\'' + task.name + '\')" class="btn btn-primary">Run Now</button>' +
-                '</div>' +
-                '</div>';
-        }
-
-        function runTask(taskName) {
-            if (!confirm('Run task "' + taskName + '"?')) return;
-
-            fetch('/tasks/' + taskName + '/execute', { method: 'POST' })
-                .then(res => res.json())
-                .then(data => {
-                    alert(data.message || 'Task started');
-                    window.location.reload();
-                })
-                .catch(err => alert('Failed to start task: ' + err));
-        }
-    </script>
-</body>
-</html>
-	`, username)
-}
-
-// taskDetailHandler serves the task detail page
-func (s *Server) taskDetailHandler(w http.ResponseWriter, r *http.Request) {
-	taskName := chi.URLParam(r, "taskName")
-	username := auth.GetUsernameFromContext(r)
-
-	w.Header().Set("Content-Type", "text/html")
-	fmt.Fprintf(w, `
-<!DOCTYPE html>
-<html>
-<head>
-    <title>RunRun - %s</title>
-    <link rel="stylesheet" href="/static/css/bulma.min.css">
-    <link rel="stylesheet" href="/static/css/app.css">
-</head>
-<body>
-    <nav>
-        <h1>RunRun</h1>
-        <div class="user-info">
-            <span>Logged in as %s</span>
-            <form action="/logout" method="POST" style="display: inline;">
-                <button type="submit" class="btn btn-secondary">Logout</button>
-            </form>
-        </div>
-    </nav>
-    <div class="container">
-        <a href="/">&larr; Back to Dashboard</a>
-        <h2>%s</h2>
-        <button onclick="runTask()" class="btn btn-primary mt-2">Run Task</button>
-
-        <h3 class="mt-3">Execution History</h3>
-        <div id="history">
-            <p>No executions yet</p>
-        </div>
-
-        <h3 class="mt-3">Live Logs</h3>
-        <div class="log-container" id="logs">
-            <div class="log-line">Waiting for execution...</div>
-        </div>
-    </div>
-    <script>
-        function runTask() {
-            if (!confirm('Run task "%s"?')) return;
-
-            fetch('/tasks/%s/execute', { method: 'POST' })
-                .then(res => res.json())
-                .then(data => {
-                    alert(data.message || 'Task started');
-                    location.reload();
-                })
-                .catch(err => alert('Failed to start task: ' + err));
-        }
-    </script>
-</body>
-</html>
-	`, taskName, username, taskName, taskName, taskName)
-}
-
-// executeTaskHandler handles task execution requests
+// executeTaskHandler handles task execution requests.
 func (s *Server) executeTaskHandler(w http.ResponseWriter, r *http.Request) {
 	taskName := chi.URLParam(r, "taskName")
 
@@ -323,9 +261,9 @@ func (s *Server) executeTaskHandler(w http.ResponseWriter, r *http.Request) {
 
 	if task == nil {
 		w.WriteHeader(http.StatusNotFound)
-		writeJSON(w, map[string]interface{}{
-			"success": false,
-			"message": fmt.Sprintf("Task '%s' not found", taskName),
+		writeJSON(w, map[string]any{
+			fieldSuccess: false,
+			fieldMessage: fmt.Sprintf("Task '%s' not found", taskName),
 		})
 		return
 	}
@@ -334,35 +272,35 @@ func (s *Server) executeTaskHandler(w http.ResponseWriter, r *http.Request) {
 	executionID, err := s.executor.SubmitTask(task)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
-		writeJSON(w, map[string]interface{}{
-			"success": false,
-			"message": fmt.Sprintf("Failed to queue task: %v", err),
+		writeJSON(w, map[string]any{
+			fieldSuccess: false,
+			fieldMessage: fmt.Sprintf("Failed to queue task: %v", err),
 		})
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	writeJSON(w, map[string]interface{}{
-		"success":      true,
-		"message":      fmt.Sprintf("Task '%s' execution queued", taskName),
-		"execution_id": executionID,
+	writeJSON(w, map[string]any{
+		fieldSuccess:     true,
+		fieldMessage:     fmt.Sprintf("Task '%s' execution queued", taskName),
+		fieldExecutionID: executionID,
 	})
 }
 
-// statusAPIHandler returns the status of all tasks
-func (s *Server) statusAPIHandler(w http.ResponseWriter, r *http.Request) {
+// statusAPIHandler returns the status of all tasks.
+func (s *Server) statusAPIHandler(w http.ResponseWriter, _ *http.Request) {
 	// Get statistics from executor
 	stats := s.executor.GetStats()
 
 	// Build task status from config with real status
-	tasks := make([]map[string]interface{}, 0, len(s.config.Tasks))
+	tasks := make([]map[string]any, 0, len(s.config.Tasks))
 	for _, task := range s.config.Tasks {
 		// Get latest execution for this task
 		latest, err := s.executor.GetLatestExecution(task.Name)
 
-		status := "idle"
-		var lastRun interface{}
-		var duration interface{}
+		status := statusIdle
+		var lastRun any
+		var duration any
 
 		if err == nil {
 			// Task has been executed at least once
@@ -376,23 +314,23 @@ func (s *Server) statusAPIHandler(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		tasks = append(tasks, map[string]interface{}{
+		tasks = append(tasks, map[string]any{
 			"name":        task.Name,
 			"description": task.Description,
 			"tags":        task.Tags,
-			"status":      status,
+			fieldStatus:   status,
 			"last_run":    lastRun,
 			"duration":    duration,
 		})
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	writeJSON(w, map[string]interface{}{
+	writeJSON(w, map[string]any{
 		"tasks": tasks,
-		"stats": map[string]interface{}{
+		"stats": map[string]any{
 			"total":      len(s.config.Tasks),
 			"running":    stats.Running,
-			"success":    stats.Success,
+			fieldSuccess: stats.Success,
 			"failed":     stats.Failed,
 			"queued":     stats.Queued,
 			"executions": stats.Total,
@@ -400,73 +338,16 @@ func (s *Server) statusAPIHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// viewLogsHandler serves log viewing page
-func (s *Server) viewLogsHandler(w http.ResponseWriter, r *http.Request) {
-	executionID := chi.URLParam(r, "executionID")
-
-	// Get execution from executor
-	execution, err := s.executor.GetExecution(executionID)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Execution not found: %v", err), http.StatusNotFound)
-		return
+// shortExecutionID truncates an execution ID to shortExecutionIDLen
+// characters, used to keep downloaded log filenames short and readable.
+func shortExecutionID(executionID string) string {
+	if len(executionID) > shortExecutionIDLen {
+		return executionID[:shortExecutionIDLen]
 	}
-
-	// Read log file if it exists
-	var logContent string
-	if execution.LogFilePath != "" {
-		content, err := executor.ReadLogFile(execution.LogFilePath)
-		if err != nil {
-			logContent = fmt.Sprintf("Error reading log file: %v", err)
-		} else {
-			// Escape HTML but preserve formatting
-			logContent = html.EscapeString(string(content))
-		}
-	} else {
-		logContent = "Log file not yet created (execution may still be running)"
-	}
-
-	w.Header().Set("Content-Type", "text/html")
-	fmt.Fprintf(w, `
-<!DOCTYPE html>
-<html>
-<head>
-    <title>RunRun - Logs %s</title>
-    <link rel="stylesheet" href="/static/css/bulma.min.css">
-    <link rel="stylesheet" href="/static/css/app.css">
-</head>
-<body>
-    <nav>
-        <h1>RunRun</h1>
-        <div class="user-info">
-            <a href="/" class="btn btn-secondary">Back to Dashboard</a>
-        </div>
-    </nav>
-    <div class="container">
-        <h2>Execution Logs</h2>
-        <p>Execution ID: %s</p>
-        <p>Task: %s</p>
-        <p>Status: %s</p>
-
-        <div style="margin-top: 1rem;">
-            <button onclick="copyLogs()" class="btn btn-secondary">Copy</button>
-            <a href="/logs/%s/download" class="btn btn-secondary">Download</a>
-        </div>
-
-        <div class="log-container mt-2" id="logs">%s</div>
-    </div>
-    <script>
-        function copyLogs() {
-            const logs = document.getElementById('logs').textContent;
-            navigator.clipboard.writeText(logs);
-            alert('Logs copied to clipboard');
-        }
-    </script>
-</body>
-</html>
-	`, executionID, executionID, execution.TaskName, execution.Status, executionID, logContent)
+	return executionID
 }
 
-// downloadLogsHandler handles log file downloads
+// downloadLogsHandler handles log file downloads.
 func (s *Server) downloadLogsHandler(w http.ResponseWriter, r *http.Request) {
 	executionID := chi.URLParam(r, "executionID")
 
@@ -489,20 +370,17 @@ func (s *Server) downloadLogsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Serve file for download
-	executionIDShort := executionID
-	if len(executionIDShort) > 8 {
-		executionIDShort = executionIDShort[:8]
-	}
-	filename := fmt.Sprintf("%s_%s.log", execution.TaskName, executionIDShort)
+	// Serve file for download. http.ServeContent (rather than a direct
+	// w.Write) is used so the response is built from a named file with an
+	// explicit, already-set Content-Type instead of writing raw bytes to
+	// the ResponseWriter directly; it also gives us Range support for free.
+	filename := fmt.Sprintf("%s_%s.log", execution.TaskName, shortExecutionID(executionID))
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filename))
-	if _, err := w.Write(content); err != nil {
-		log.Printf("Failed to write download response: %v", err)
-	}
+	http.ServeContent(w, r, filename, time.Time{}, bytes.NewReader(content))
 }
 
-// pollLogsHandler provides HTTP polling fallback for clients without WebSocket
+// pollLogsHandler provides HTTP polling fallback for clients without WebSocket.
 func (s *Server) pollLogsHandler(w http.ResponseWriter, r *http.Request) {
 	executionID := chi.URLParam(r, "executionID")
 
@@ -531,18 +409,63 @@ func (s *Server) pollLogsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Return JSON response
-	response := map[string]interface{}{
-		"execution_id": execution.ID,
-		"task_name":    execution.TaskName,
-		"status":       execution.Status,
-		"started_at":   execution.StartedAt,
-		"finished_at":  execution.FinishedAt,
-		"logs":         logLines,
+	response := map[string]any{
+		fieldExecutionID: execution.ID,
+		"task_name":      execution.TaskName,
+		fieldStatus:      execution.Status,
+		"started_at":     execution.StartedAt,
+		"finished_at":    execution.FinishedAt,
+		"logs":           logLines,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 	writeJSON(w, response)
+}
+
+// parseSegmentParams extracts and normalizes the start/count/mode query
+// parameters accepted by segmentLogsHandler.
+func parseSegmentParams(r *http.Request) (int, int, string) {
+	start, _ := strconv.Atoi(r.URL.Query().Get("start"))
+	count, _ := strconv.Atoi(r.URL.Query().Get("count"))
+	mode := r.URL.Query().Get("mode")
+
+	if count <= 0 {
+		count = defaultSegmentCount
+	}
+	if count > maxSegmentCount {
+		count = maxSegmentCount
+	}
+	if start < 0 {
+		start = 0
+	}
+	if mode == "" {
+		mode = "head"
+	}
+
+	return start, count, mode
+}
+
+// segmentLineEntry is a single log line returned by segmentLogsHandler,
+// annotated with its detected level and absolute line number.
+type segmentLineEntry struct {
+	Line   string `json:"line"`
+	Level  string `json:"level"`
+	Number int    `json:"number"`
+}
+
+// buildSegmentLineEntries annotates each log line with its detected level
+// and its absolute line number (start-relative).
+func buildSegmentLineEntries(lines []string, start int) []segmentLineEntry {
+	entries := make([]segmentLineEntry, len(lines))
+	for i, line := range lines {
+		entries[i] = segmentLineEntry{
+			Line:   line,
+			Level:  ws.ParseLogLevel(line),
+			Number: start + i,
+		}
+	}
+	return entries
 }
 
 // segmentLogsHandler returns a paginated segment of log lines for a completed execution.
@@ -562,23 +485,7 @@ func (s *Server) segmentLogsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse query params
-	start, _ := strconv.Atoi(r.URL.Query().Get("start"))
-	count, _ := strconv.Atoi(r.URL.Query().Get("count"))
-	mode := r.URL.Query().Get("mode")
-
-	if count <= 0 {
-		count = 500
-	}
-	if count > 5000 {
-		count = 5000
-	}
-	if start < 0 {
-		start = 0
-	}
-	if mode == "" {
-		mode = "head"
-	}
+	start, count, mode := parseSegmentParams(r)
 
 	// For tail mode, calculate start from end
 	if mode == "tail" {
@@ -587,10 +494,7 @@ func (s *Server) segmentLogsHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, fmt.Sprintf("Failed to count lines: %v", err), http.StatusInternalServerError)
 			return
 		}
-		start = totalLines - count
-		if start < 0 {
-			start = 0
-		}
+		start = max(totalLines-count, 0)
 	}
 
 	lines, totalLines, err := executor.ReadLogSegment(execution.LogFilePath, start, count)
@@ -599,34 +503,20 @@ func (s *Server) segmentLogsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Build response lines with level detection
-	type lineEntry struct {
-		Line   string `json:"line"`
-		Level  string `json:"level"`
-		Number int    `json:"number"`
-	}
-	responseLines := make([]lineEntry, len(lines))
-	for i, line := range lines {
-		responseLines[i] = lineEntry{
-			Line:   line,
-			Level:  ws.ParseLogLevel(line),
-			Number: start + i,
-		}
-	}
-
+	responseLines := buildSegmentLineEntries(lines, start)
 	hasMore := start+len(lines) < totalLines
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
-	writeJSON(w, map[string]interface{}{
-		"execution_id": executionID,
-		"task_name":    execution.TaskName,
-		"status":       execution.Status,
-		"lines":        responseLines,
-		"total_lines":  totalLines,
-		"start":        start,
-		"count":        len(lines),
-		"has_more":     hasMore,
+	writeJSON(w, map[string]any{
+		fieldExecutionID: executionID,
+		"task_name":      execution.TaskName,
+		fieldStatus:      execution.Status,
+		"lines":          responseLines,
+		"total_lines":    totalLines,
+		"start":          start,
+		"count":          len(lines),
+		"has_more":       hasMore,
 	})
 }
 
@@ -641,10 +531,10 @@ func (s *Server) segmentLogsHandler(w http.ResponseWriter, r *http.Request) {
 // - Non-browser clients (CLI, scripts): Allowed (no Origin header)
 // - Different scheme (http vs https) on same host: Allowed
 //
-// See docs/websocket-authentication.md for complete security documentation
+// See docs/websocket-authentication.md for complete security documentation.
 var upgrader = websocket.Upgrader{
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
+	ReadBufferSize:  wsBufferSize,
+	WriteBufferSize: wsBufferSize,
 
 	// CheckOrigin validates the Origin header to enforce same-origin policy
 	// This is a critical security control for browser-based WebSocket connections
@@ -679,6 +569,50 @@ var upgrader = websocket.Upgrader{
 	},
 }
 
+// wsAuthToken extracts the session token from a WebSocket upgrade request:
+// it prefers the session cookie (browser clients) and falls back to the
+// "Authorization: Bearer <token>" header (CLI/programmatic clients).
+func wsAuthToken(r *http.Request) string {
+	if cookie, err := r.Cookie("session"); err == nil {
+		return cookie.Value
+	}
+
+	const bearerPrefix = "Bearer "
+	authHeader := r.Header.Get("Authorization")
+	if len(authHeader) > len(bearerPrefix) && strings.HasPrefix(authHeader, bearerPrefix) {
+		return strings.TrimPrefix(authHeader, bearerPrefix)
+	}
+
+	return ""
+}
+
+// authenticateWebSocket validates the caller's session token for a
+// WebSocket log-streaming request. On failure it writes the appropriate
+// HTTP error response itself and returns ok=false; the caller must not
+// proceed with the upgrade in that case.
+//
+// This manual authentication step is required because wsLogsHandler sits
+// outside the normal auth middleware chain (see the handler's doc comment).
+func (s *Server) authenticateWebSocket(w http.ResponseWriter, r *http.Request, executionID string) bool {
+	token := wsAuthToken(r)
+	if token == "" {
+		log.Printf("WebSocket auth failed for %s: no session token", strconv.Quote(executionID))
+		http.Error(w, "Unauthorized: no session token", http.StatusUnauthorized)
+		return false
+	}
+
+	username, err := s.authService.ValidateSession(token)
+	if err != nil {
+		log.Printf("WebSocket auth failed for %s: invalid session - %v", strconv.Quote(executionID), err)
+		http.Error(w, "Unauthorized: invalid session", http.StatusUnauthorized)
+		return false
+	}
+
+	log.Printf("WebSocket connection authorized for user %s viewing execution %s",
+		strconv.Quote(username), strconv.Quote(executionID))
+	return true
+}
+
 // wsLogsHandler handles WebSocket connections for real-time log streaming
 // wsLogsHandler streams execution logs via WebSocket connection
 //
@@ -698,46 +632,13 @@ var upgrader = websocket.Upgrader{
 //   - Session cookie: Cookie: session=<jwt-token>
 //   - Authorization header: Authorization: Bearer <jwt-token>
 //
-// See docs/websocket-authentication.md for complete documentation
+// See docs/websocket-authentication.md for complete documentation.
 func (s *Server) wsLogsHandler(w http.ResponseWriter, r *http.Request) {
 	executionID := chi.URLParam(r, "executionID")
 
-	// === AUTHENTICATION PHASE ===
-	// Manual authentication is required because this endpoint is outside the middleware chain
-
-	// Step 1: Extract authentication token from request
-	// Try session cookie first (browser-based clients)
-	token := ""
-	cookie, err := r.Cookie("session")
-	if err == nil {
-		token = cookie.Value
-	}
-
-	// Step 2: Fallback to Authorization header (CLI/programmatic clients)
-	// Format: "Authorization: Bearer <jwt-token>"
-	if token == "" {
-		authHeader := r.Header.Get("Authorization")
-		if authHeader != "" && len(authHeader) > 7 && authHeader[:7] == "Bearer " {
-			token = authHeader[7:] // Extract token after "Bearer "
-		}
-	}
-
-	// Step 3: Reject if no authentication provided
-	if token == "" {
-		log.Printf("WebSocket auth failed for %s: no session token", executionID)
-		http.Error(w, "Unauthorized: no session token", http.StatusUnauthorized)
+	if ok := s.authenticateWebSocket(w, r, executionID); !ok {
 		return
 	}
-
-	// Step 4: Validate JWT token and verify session exists
-	username, err := s.authService.ValidateSession(token)
-	if err != nil {
-		log.Printf("WebSocket auth failed for %s: invalid session - %v", executionID, err)
-		http.Error(w, "Unauthorized: invalid session", http.StatusUnauthorized)
-		return
-	}
-
-	log.Printf("WebSocket connection authorized for user '%s' viewing execution %s", username, executionID)
 
 	// === AUTHORIZATION PHASE ===
 	// Verify the requested execution exists
@@ -753,7 +654,11 @@ func (s *Server) wsLogsHandler(w http.ResponseWriter, r *http.Request) {
 		log.Printf("WebSocket upgrade failed: %v", err)
 		return
 	}
-	defer conn.Close()
+	defer func() {
+		if cerr := conn.Close(); cerr != nil {
+			log.Printf("Failed to close WebSocket connection: %v", cerr)
+		}
+	}()
 
 	// Parse optional level filter from query parameters (?level=error,warn)
 	levelFilter := ws.ParseLevelFilter(r.URL.Query().Get("level"))
@@ -796,7 +701,7 @@ func (s *Server) wsLogsRealtime(conn *websocket.Conn, r *http.Request, execution
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		conn.SetReadLimit(512)
+		conn.SetReadLimit(wsReadLimitBytes)
 		for {
 			_, _, err := conn.ReadMessage()
 			if err != nil {
@@ -824,60 +729,144 @@ func (s *Server) wsLogsRealtime(conn *websocket.Conn, r *http.Request, execution
 	}
 }
 
-// wsLogsFromFile streams log content from a completed execution's log file
-func (s *Server) wsLogsFromFile(conn *websocket.Conn, r *http.Request, execution *executor.Execution, executionID string, levelFilter map[string]bool) {
-	if execution.LogFilePath == "" {
-		// No log file available
-		msg := map[string]interface{}{
-			"type": "log",
-			"data": map[string]interface{}{
-				"line":      fmt.Sprintf("[Execution completed with status: %s]\n[Log file not available]", execution.Status),
-				"timestamp": time.Now().Format(time.RFC3339),
-				"level":     "info",
-			},
-		}
-		writeWSJSON(conn, msg)
-
-		// Send complete message so client knows not to reconnect
-		completeMsg := map[string]interface{}{
-			"type":         "complete",
-			"execution_id": executionID,
-			"data":         map[string]string{"status": string(execution.Status)},
-			"timestamp":    time.Now().Format(time.RFC3339),
-		}
-		writeWSJSON(conn, completeMsg)
-		return
-	}
-
-	// Count total lines first for metadata
-	totalLines, countErr := executor.CountFileLines(execution.LogFilePath)
-
-	// Open and stream the log file
-	file, err := os.Open(execution.LogFilePath)
+// openExecutionLogFile opens an execution's log file for reading after
+// confirming the resolved path stays within the server's configured log
+// directory. Execution log paths are always generated internally by the
+// executor from a UUID and the configured task name (never taken directly
+// from client input), but this check guards against path traversal
+// defensively should that ever change.
+func (s *Server) openExecutionLogFile(path string) (*os.File, error) {
+	logDir, err := filepath.Abs(s.config.Server.LogDirectory)
 	if err != nil {
-		writeWSJSON(conn, map[string]interface{}{
-			"type": "error",
-			"data": map[string]interface{}{
-				"message": fmt.Sprintf("Failed to open log file: %v", err),
-			},
-		})
-		return
-	}
-	defer file.Close()
-
-	// Send metadata with total line count if available
-	if countErr == nil {
-		writeWSJSON(conn, map[string]interface{}{
-			"type":         "metadata",
-			"execution_id": executionID,
-			"data": map[string]interface{}{
-				"total_lines": totalLines,
-			},
-			"timestamp": time.Now().Format(time.RFC3339),
-		})
+		return nil, fmt.Errorf("resolve log directory: %w", err)
 	}
 
-	// Channel to detect client disconnect
+	absPath, err := filepath.Abs(filepath.Clean(path))
+	if err != nil {
+		return nil, fmt.Errorf("resolve log file path: %w", err)
+	}
+
+	rel, err := filepath.Rel(logDir, absPath)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return nil, fmt.Errorf("%w: %s", ErrLogPathOutsideLogDir, path)
+	}
+
+	//nolint:gosec // G304: absPath was cleaned, resolved to absolute, and just confirmed above to reside inside s.config.Server.LogDirectory.
+	file, err := os.Open(absPath)
+	if err != nil {
+		return nil, fmt.Errorf("open log file: %w", err)
+	}
+
+	return file, nil
+}
+
+// sendLogFileComplete sends the "complete" message that signals to the
+// client that no further log data will be sent for this execution.
+func sendLogFileComplete(conn *websocket.Conn, executionID string, execution *executor.Execution) {
+	writeWSJSON(conn, map[string]any{
+		fieldType:        wsMsgTypeComplete,
+		fieldExecutionID: executionID,
+		fieldData:        map[string]string{fieldStatus: string(execution.Status)},
+		fieldTimestamp:   time.Now().Format(time.RFC3339),
+	})
+}
+
+// sendMissingLogFileMessage informs the client that a completed execution
+// has no log file available, then sends the closing "complete" message.
+func sendMissingLogFileMessage(conn *websocket.Conn, executionID string, execution *executor.Execution) {
+	writeWSJSON(conn, map[string]any{
+		fieldType: wsMsgTypeLog,
+		fieldData: map[string]any{
+			"line": fmt.Sprintf("[Execution completed with status: %s]\n[Log file not available]",
+				execution.Status),
+			fieldTimestamp: time.Now().Format(time.RFC3339),
+			"level":        "info",
+		},
+	})
+
+	sendLogFileComplete(conn, executionID, execution)
+}
+
+// sendLogFileMetadata sends the total line count for the log file about to
+// be streamed, if it was successfully determined.
+func sendLogFileMetadata(conn *websocket.Conn, executionID string, totalLines int) {
+	writeWSJSON(conn, map[string]any{
+		fieldType:        wsMsgTypeMetadata,
+		fieldExecutionID: executionID,
+		fieldData: map[string]any{
+			"total_lines": totalLines,
+		},
+		fieldTimestamp: time.Now().Format(time.RFC3339),
+	})
+}
+
+// buildLogFileLineMessage builds the WebSocket payload for a single
+// streamed log line. ok is false if the line should be skipped, either
+// because it precedes startLine or because it fails the level filter.
+func buildLogFileLineMessage(line string, lineNum, startLine int, levelFilter map[string]bool) (map[string]any, bool) {
+	if lineNum <= startLine {
+		return nil, false
+	}
+
+	level := ws.ParseLogLevel(line)
+	if !ws.MatchesFilter(level, levelFilter) {
+		return nil, false
+	}
+
+	return map[string]any{
+		"line":         line,
+		fieldTimestamp: time.Now().Format(time.RFC3339),
+		"level":        level,
+	}, true
+}
+
+// streamLogFileLines reads execution log lines from file in batches and
+// forwards them to the WebSocket connection, applying levelFilter and
+// skipping lines up to startLine. It returns false if a write to the
+// connection failed, signalling the caller to stop without further writes.
+func streamLogFileLines(
+	conn *websocket.Conn, file *os.File, executionID string, startLine, batchSize int, levelFilter map[string]bool,
+) bool {
+	reader := bufio.NewReader(file)
+	lineNum := 0
+	batch := make([]map[string]any, 0, batchSize)
+
+	// flush sends any pending batched lines, clearing the batch. It
+	// reports false only if the send itself failed.
+	flush := func() bool {
+		if len(batch) == 0 {
+			return true
+		}
+		err := sendLogBatch(conn, executionID, batch)
+		batch = batch[:0]
+		return err == nil
+	}
+
+	for {
+		line, readErr := reader.ReadString('\n')
+
+		if line != "" {
+			lineNum++
+			if msg, ok := buildLogFileLineMessage(line, lineNum, startLine, levelFilter); ok {
+				batch = append(batch, msg)
+				if len(batch) >= batchSize && !flush() {
+					return false
+				}
+			}
+		}
+
+		if readErr != nil {
+			break
+		}
+	}
+
+	return flush()
+}
+
+// watchForDisconnect returns a channel that is closed once the client
+// either disconnects or sends any message on the connection (clients
+// streaming logs from a completed execution aren't expected to send any).
+func watchForDisconnect(conn *websocket.Conn) <-chan struct{} {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -887,6 +876,45 @@ func (s *Server) wsLogsFromFile(conn *websocket.Conn, r *http.Request, execution
 			}
 		}
 	}()
+	return done
+}
+
+// wsLogsFromFile streams log content from a completed execution's log file.
+func (s *Server) wsLogsFromFile(
+	conn *websocket.Conn, r *http.Request, execution *executor.Execution, executionID string, levelFilter map[string]bool,
+) {
+	if execution.LogFilePath == "" {
+		sendMissingLogFileMessage(conn, executionID, execution)
+		return
+	}
+
+	// Count total lines first for metadata
+	totalLines, countErr := executor.CountFileLines(execution.LogFilePath)
+
+	// Open and stream the log file
+	file, err := s.openExecutionLogFile(execution.LogFilePath)
+	if err != nil {
+		writeWSJSON(conn, map[string]any{
+			fieldType: wsMsgTypeError,
+			fieldData: map[string]any{
+				fieldMessage: fmt.Sprintf("Failed to open log file: %v", err),
+			},
+		})
+		return
+	}
+	defer func() {
+		if cerr := file.Close(); cerr != nil {
+			log.Printf("Failed to close log file: %v", cerr)
+		}
+	}()
+
+	// Send metadata with total line count if available
+	if countErr == nil {
+		sendLogFileMetadata(conn, executionID, totalLines)
+	}
+
+	// Channel to detect client disconnect
+	done := watchForDisconnect(conn)
 
 	// Parse optional start_line query param to skip N lines
 	startLine, _ := strconv.Atoi(r.URL.Query().Get("start_line"))
@@ -894,99 +922,40 @@ func (s *Server) wsLogsFromFile(conn *websocket.Conn, r *http.Request, execution
 	// Stream lines from the log file in batches for efficiency
 	batchSize := s.wsHub.GetConfig().FileStreamBatchSize
 	if batchSize <= 0 {
-		batchSize = 100
+		batchSize = defaultStreamBatchSize
 	}
 
-	reader := bufio.NewReader(file)
-	lineNum := 0
-	batch := make([]map[string]interface{}, 0, batchSize)
-	for {
-		line, readErr := reader.ReadString('\n')
-		if line != "" {
-			lineNum++
-
-			// Skip lines before start_line
-			if lineNum <= startLine {
-				if readErr != nil {
-					break
-				}
-				continue
-			}
-
-			level := ws.ParseLogLevel(line)
-
-			// Apply server-side level filter
-			if !ws.MatchesFilter(level, levelFilter) {
-				if readErr != nil {
-					break
-				}
-				continue
-			}
-
-			batch = append(batch, map[string]interface{}{
-				"line":      line,
-				"timestamp": time.Now().Format(time.RFC3339),
-				"level":     level,
-			})
-
-			if len(batch) >= batchSize {
-				if writeErr := sendLogBatch(conn, executionID, batch); writeErr != nil {
-					return
-				}
-				batch = batch[:0]
-			}
-		}
-		if readErr != nil {
-			break
-		}
-	}
-	// Flush remaining lines
-	if len(batch) > 0 {
-		if writeErr := sendLogBatch(conn, executionID, batch); writeErr != nil {
-			return
-		}
+	if !streamLogFileLines(conn, file, executionID, startLine, batchSize, levelFilter) {
+		return
 	}
 
-	// Send complete message
-	completeMsg := map[string]interface{}{
-		"type":         "complete",
-		"execution_id": executionID,
-		"data":         map[string]string{"status": string(execution.Status)},
-		"timestamp":    time.Now().Format(time.RFC3339),
-	}
-	writeWSJSON(conn, completeMsg)
+	sendLogFileComplete(conn, executionID, execution)
 
 	// Wait briefly for client to receive the complete message before closing
 	select {
 	case <-done:
-	case <-time.After(5 * time.Second):
+	case <-time.After(completeMessageWait):
 	case <-r.Context().Done():
 	}
 }
 
 // Templ-based handlers
 
-// dashboardHandlerTempl serves the dashboard using templ templates
-func (s *Server) dashboardHandlerTempl(w http.ResponseWriter, r *http.Request) {
-	username := auth.GetUsernameFromContext(r)
-
-	// Get statistics from executor
-	stats := s.executor.GetStats()
-
-	// Build task cards from config with real status
-	taskCards := make([]templates.TaskCard, 0, len(s.config.Tasks))
+// buildTaskCards constructs the dashboard's task cards from configuration
+// and each task's most recent execution, along with a count of tasks that
+// have no execution history yet.
+func buildTaskCards(cfg *config.Config, exec *executor.TaskExecutor) ([]templates.TaskCard, int) {
+	cards := make([]templates.TaskCard, 0, len(cfg.Tasks))
 	idleCount := 0
 
-	for _, task := range s.config.Tasks {
-		// Get latest execution for this task
-		latest, err := s.executor.GetLatestExecution(task.Name)
+	for _, task := range cfg.Tasks {
+		latest, err := exec.GetLatestExecution(task.Name)
 
-		status := "idle"
+		status := statusIdle
 		var lastRun *time.Time
 		duration := ""
 
 		if err == nil {
-			// Task has been executed at least once
 			status = string(latest.Status)
 			lastRun = &latest.StartedAt
 
@@ -999,16 +968,27 @@ func (s *Server) dashboardHandlerTempl(w http.ResponseWriter, r *http.Request) {
 			idleCount++
 		}
 
-		card := templates.TaskCard{
+		cards = append(cards, templates.TaskCard{
 			Name:        task.Name,
 			Description: task.Description,
 			Tags:        task.Tags,
 			Status:      status,
 			LastRun:     lastRun,
 			Duration:    duration,
-		}
-		taskCards = append(taskCards, card)
+		})
 	}
+
+	return cards, idleCount
+}
+
+// dashboardHandlerTempl serves the dashboard using templ templates.
+func (s *Server) dashboardHandlerTempl(w http.ResponseWriter, r *http.Request) {
+	username := auth.GetUsernameFromContext(r)
+
+	// Get statistics from executor
+	stats := s.executor.GetStats()
+
+	taskCards, idleCount := buildTaskCards(s.config, s.executor)
 
 	// Build dashboard statistics
 	dashboardStats := templates.DashboardStats{
@@ -1039,7 +1019,7 @@ func (s *Server) dashboardHandlerTempl(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// taskDetailHandlerTempl serves the task detail page using templ templates
+// taskDetailHandlerTempl serves the task detail page using templ templates.
 func (s *Server) taskDetailHandlerTempl(w http.ResponseWriter, r *http.Request) {
 	taskName := chi.URLParam(r, "taskName")
 	username := auth.GetUsernameFromContext(r)
@@ -1089,7 +1069,7 @@ func (s *Server) taskDetailHandlerTempl(w http.ResponseWriter, r *http.Request) 
 		TaskName:    task.Name,
 		Description: task.Description,
 		Tags:        task.Tags,
-		Status:      "idle",
+		Status:      statusIdle,
 		Executions:  taskExecutions,
 	}
 
@@ -1101,7 +1081,7 @@ func (s *Server) taskDetailHandlerTempl(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
-// loginPageHandlerTempl serves the login page using templ templates
+// loginPageHandlerTempl serves the login page using templ templates.
 func (s *Server) loginPageHandlerTempl(w http.ResponseWriter, r *http.Request) {
 	// Get error from query parameter if present
 	errorMsg := r.URL.Query().Get("error")
@@ -1119,7 +1099,7 @@ func (s *Server) loginPageHandlerTempl(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// viewLogsHandlerTempl serves the logs page using templ templates
+// viewLogsHandlerTempl serves the logs page using templ templates.
 func (s *Server) viewLogsHandlerTempl(w http.ResponseWriter, r *http.Request) {
 	executionID := chi.URLParam(r, "executionID")
 	username := auth.GetUsernameFromContext(r)
@@ -1147,7 +1127,7 @@ func (s *Server) viewLogsHandlerTempl(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// getCSRFToken retrieves or generates a CSRF token for the current session
+// getCSRFToken retrieves or generates a CSRF token for the current session.
 func (s *Server) getCSRFToken(r *http.Request) string {
 	// Get session cookie
 	sessionCookie, err := r.Cookie(auth.SessionCookieName)

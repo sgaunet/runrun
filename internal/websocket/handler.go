@@ -3,6 +3,7 @@ package websocket
 import (
 	"log"
 	"net/http"
+	"net/url"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -10,19 +11,45 @@ import (
 )
 
 var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool {
-		// TODO: Implement proper origin checking for production
-		return true
-	},
+	// CheckOrigin enforces a same-origin policy for the WebSocket handshake,
+	// which prevents Cross-Site WebSocket Hijacking (CSWSH). Non-browser
+	// clients (no Origin header) are still allowed through; they must
+	// authenticate the same way browser clients do.
+	CheckOrigin: checkOrigin,
 }
 
-// Handler handles WebSocket connection upgrades
+// checkOrigin reports whether a WebSocket upgrade request's Origin header
+// (when present) matches the request's own host. It mirrors the origin
+// check used by the server's primary WebSocket handler; see
+// docs/websocket-authentication.md for the full security rationale.
+func checkOrigin(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		// Non-browser clients (curl, scripts, CLI tools) don't send Origin.
+		return true
+	}
+
+	originURL, err := url.Parse(origin)
+	if err != nil {
+		log.Printf("Invalid origin URL: %s - %s", sanitizeLogValue(origin), sanitizeLogValue(err))
+		return false
+	}
+
+	if originURL.Host == r.Host {
+		return true
+	}
+
+	log.Printf("WebSocket origin rejected: %s (expected: %s)", sanitizeLogValue(originURL.Host), sanitizeLogValue(r.Host))
+	return false
+}
+
+// Handler handles WebSocket connection upgrades.
 type Handler struct {
 	Hub    *Hub
 	Config *Config
 }
 
-// NewHandler creates a new WebSocket handler
+// NewHandler creates a new WebSocket handler.
 func NewHandler(hub *Hub, config *Config) *Handler {
 	return &Handler{
 		Hub:    hub,
@@ -30,7 +57,7 @@ func NewHandler(hub *Hub, config *Config) *Handler {
 	}
 }
 
-// ServeWS handles WebSocket requests from clients
+// ServeWS handles WebSocket requests from clients.
 func (h *Handler) ServeWS(w http.ResponseWriter, r *http.Request) {
 	executionID := chi.URLParam(r, "executionID")
 	if executionID == "" {
@@ -66,5 +93,6 @@ func (h *Handler) ServeWS(w http.ResponseWriter, r *http.Request) {
 	go client.WritePump(h.Config)
 	go client.ReadPump(h.Config)
 
-	log.Printf("WebSocket connection established for execution %s (client: %s)", executionID, clientID)
+	log.Printf("WebSocket connection established for execution %s (client: %s)",
+		sanitizeLogValue(executionID), sanitizeLogValue(clientID))
 }

@@ -7,14 +7,17 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// Version information - can be set via ldflags during build.
 var (
-	// Version information - can be set via ldflags during build
-	Version   = "1.0.0"
+	// Version is the RunRun release version.
+	Version = "1.0.0"
+	// BuildDate is the date the binary was built.
 	BuildDate = "unknown"
+	// GitCommit is the git commit hash the binary was built from.
 	GitCommit = "unknown"
 )
 
-// rootCmd represents the base command when called without any subcommands
+// rootCmd represents the base command when called without any subcommands.
 var rootCmd = &cobra.Command{
 	Use:   "runrun",
 	Short: "RunRun - Task Execution Platform",

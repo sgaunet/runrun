@@ -32,6 +32,7 @@ tasks:
   vulncheck:
     desc: "Scan dependencies for known vulnerabilities"
     cmds:
+      - go tool templ generate
       - govulncheck ./...
 
   default:

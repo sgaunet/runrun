@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/chi/v5/middleware"
 	"github.com/sgaunet/runrun/internal/auth"
 	"github.com/sgaunet/runrun/internal/config"
 	"github.com/sgaunet/runrun/internal/csrf"
@@ -155,7 +154,12 @@ func (s *Server) setupRouter() {
 	r.Use(customMiddleware.CSPNonceMiddleware)        // Per-request CSP nonce (must precede SecurityHeaders)
 	r.Use(customMiddleware.SecurityHeadersMiddleware) // Security headers (reads nonce from context)
 	r.Use(customMiddleware.LoggingMiddleware)         // Custom logging
-	r.Use(middleware.RealIP)                          // Set RemoteAddr to real IP
+	// NOTE: chi's middleware.RealIP is deliberately NOT used. It rewrites
+	// r.RemoteAddr from unauthenticated X-Forwarded-For / X-Real-IP /
+	// True-Client-IP headers, so any client can forge the address the access
+	// log records (GHSA-3fxj-6jh8-hvhx). r.RemoteAddr therefore stays the real
+	// TCP peer; components that need the proxied client IP resolve it
+	// themselves (see internal/ratelimit and internal/security).
 	// NOTE: Compression and Timeout middleware are applied selectively in SetupRoutes
 	// because they wrap the response writer and break WebSocket upgrades (http.Hijacker)
 

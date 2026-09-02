@@ -19,3 +19,4 @@ coverage.txt
 /.playwright-cli
 /.claude
 /.specify
+/govulncheck.sarif

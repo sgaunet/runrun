@@ -29,6 +29,11 @@ vars:
     tools/tailwindcss
 
 tasks:
+  vulncheck:
+    desc: "Scan dependencies for known vulnerabilities"
+    cmds:
+      - govulncheck ./...
+
   default:
     desc: "List available tasks"
     preconditions:

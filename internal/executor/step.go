@@ -161,8 +161,7 @@ func finalizeStepExecution(
 	stepExec.Output = output
 
 	if err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
+		if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
 			stepExec.ExitCode = exitErr.ExitCode()
 		} else {
 			stepExec.ExitCode = -1

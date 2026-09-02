@@ -27,8 +27,7 @@ func validateConfig(config *Config) error {
 	err := validate.Struct(config)
 	if err != nil {
 		// Format validation errors into a readable message
-		var validationErrors validator.ValidationErrors
-		if errors.As(err, &validationErrors) {
+		if validationErrors, ok := errors.AsType[validator.ValidationErrors](err); ok {
 			return formatValidationErrors(validationErrors)
 		}
 		return fmt.Errorf("validation failed: %w", err)

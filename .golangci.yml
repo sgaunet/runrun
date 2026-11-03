@@ -23,3 +23,12 @@ linters:
     - ireturn
     - gomodguard
     - lll
+
+  settings:
+    wrapcheck:
+      # internal/errors (imported as apperrors) is where AppError values are
+      # constructed; its constructors originate errors, so there is nothing
+      # to wrap. wrapcheck started flagging returns of these constructors
+      # (which return *apperrors.AppError) with golangci-lint 2.15.
+      ignore-package-globs:
+        - github.com/sgaunet/runrun/internal/errors

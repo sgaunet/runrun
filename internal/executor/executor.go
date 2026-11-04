@@ -63,8 +63,15 @@ func (e *TaskExecutor) worker(id int) {
 		case <-e.ctx.Done():
 			log.Printf("Worker %d shutting down", id)
 			return
-		case req := <-e.taskQueue:
-			if req == nil {
+		case req, ok := <-e.taskQueue:
+			if !ok {
+				log.Printf("Worker %d shutting down", id)
+				return
+			}
+			// select picks randomly among ready cases, so a worker may receive a
+			// request after shutdown has begun. Don't start new work then.
+			if e.ctx.Err() != nil {
+				e.cancelQueuedExecution(req)
 				continue
 			}
 			log.Printf("Worker %d executing task: %s (execution ID: %s)", id, req.Task.Name, req.ExecutionID)
@@ -229,6 +236,13 @@ func (e *TaskExecutor) Shutdown() error {
 	// Close task queue
 	close(e.taskQueue)
 
+	// Cancel tasks still waiting in the queue: only in-flight tasks are allowed
+	// to finish. Workers may concurrently receive some of these; they cancel
+	// them too, so no execution is left in the queued state.
+	for req := range e.taskQueue {
+		e.cancelQueuedExecution(req)
+	}
+
 	// Wait for workers to finish with timeout
 	done := make(chan struct{})
 	go func() {
@@ -244,6 +258,14 @@ func (e *TaskExecutor) Shutdown() error {
 		log.Println("Worker shutdown timeout exceeded")
 		return ErrShutdownTimeout
 	}
+}
+
+// cancelQueuedExecution marks a queued-but-never-started execution as
+// cancelled. It is used during shutdown.
+func (e *TaskExecutor) cancelQueuedExecution(req *TaskRequest) {
+	e.updateExecutionStatus(req.ExecutionID, StatusCancelled)
+	e.setExecutionFinishTime(req.ExecutionID, time.Now())
+	log.Printf("Task '%s' cancelled before start due to shutdown (ID: %s)", req.Task.Name, req.ExecutionID)
 }
 
 // SetBroadcaster sets the real-time log broadcaster.

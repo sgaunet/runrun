@@ -279,26 +279,77 @@ func TestShutdown_Graceful(t *testing.T) {
 	logDir := t.TempDir()
 	executor := NewTaskExecutor(2, logDir, 5*time.Second)
 
-	// Submit a quick task
 	task := &config.Task{
 		Name:    "quick-task",
 		Timeout: 10 * time.Second,
 		Steps: []config.Step{
-			{Name: "echo", Command: "echo 'test'"},
+			{Name: "sleep", Command: "sleep 0.2"},
 		},
 	}
 
 	executionID, err := executor.SubmitTask(task)
 	require.NoError(t, err)
 
-	// Shutdown should wait for task to complete
+	// Wait until a worker has picked the task up, so it is in flight.
+	waitForStatusNot(t, executor, executionID, StatusQueued)
+
+	// Shutdown should wait for the in-flight task to complete
 	err = executor.Shutdown()
 	assert.NoError(t, err)
 
-	// Task should have completed
 	execution, err := executor.GetExecution(executionID)
 	require.NoError(t, err)
-	assert.NotEqual(t, StatusQueued, execution.Status)
+	assert.Equal(t, StatusSuccess, execution.Status)
+}
+
+func TestShutdown_CancelsQueuedTasks(t *testing.T) {
+	logDir := t.TempDir()
+	executor := NewTaskExecutor(1, logDir, 5*time.Second)
+
+	running := &config.Task{
+		Name:    "running-task",
+		Timeout: 10 * time.Second,
+		Steps: []config.Step{
+			{Name: "sleep", Command: "sleep 0.5"},
+		},
+	}
+	queued := &config.Task{
+		Name:    "queued-task",
+		Timeout: 10 * time.Second,
+		Steps: []config.Step{
+			{Name: "echo", Command: "echo 'never runs'"},
+		},
+	}
+
+	runningID, err := executor.SubmitTask(running)
+	require.NoError(t, err)
+	waitForStatusNot(t, executor, runningID, StatusQueued)
+
+	// The only worker is busy, so this task stays in the queue.
+	queuedID, err := executor.SubmitTask(queued)
+	require.NoError(t, err)
+
+	err = executor.Shutdown()
+	require.NoError(t, err)
+
+	execution, err := executor.GetExecution(runningID)
+	require.NoError(t, err)
+	assert.Equal(t, StatusSuccess, execution.Status, "in-flight task should complete")
+
+	execution, err = executor.GetExecution(queuedID)
+	require.NoError(t, err)
+	assert.Equal(t, StatusCancelled, execution.Status, "queued task should be cancelled")
+	assert.NotNil(t, execution.FinishedAt)
+	assert.Zero(t, execution.Duration)
+}
+
+// waitForStatusNot polls until the execution's status differs from status.
+func waitForStatusNot(t *testing.T, executor *TaskExecutor, executionID string, status ExecutionStatus) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		execution, err := executor.GetExecution(executionID)
+		return err == nil && execution.Status != status
+	}, 5*time.Second, 10*time.Millisecond, "execution %s stayed %s", executionID, status)
 }
 
 func TestShutdown_Timeout(t *testing.T) {

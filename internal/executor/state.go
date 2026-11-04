@@ -126,7 +126,10 @@ func (e *TaskExecutor) setExecutionFinishTime(executionID string, finishTime tim
 
 	if execution, exists := e.executions[executionID]; exists {
 		execution.FinishedAt = &finishTime
-		execution.Duration = finishTime.Sub(execution.StartedAt)
+		// Executions cancelled before starting have no start time.
+		if !execution.StartedAt.IsZero() {
+			execution.Duration = finishTime.Sub(execution.StartedAt)
+		}
 	}
 }
 
